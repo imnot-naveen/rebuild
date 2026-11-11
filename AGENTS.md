@@ -11,3 +11,7 @@ Update `docs/STATUS.md` with evidence, open decisions, assistance, and the next 
 ## Daily closeout
 
 Do project work on a branch off `main`. At the end of each workday, push the branch, open a pull request targeting `main`, and send Naveen the PR link so he can review and merge it. Leave the merge to Naveen.
+
+## Commit messages
+
+Use [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) for every commit you create in Rebuild. Write the subject as `<type>(<scope>): <description>` and omit `(<scope>)` when a scope adds no useful context. Use a short, imperative description. For example, `docs: define the data and API contract`.
