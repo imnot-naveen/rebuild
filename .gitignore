@@ -1,1 +1,8 @@
 /init docs (don't commit)/
+
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example

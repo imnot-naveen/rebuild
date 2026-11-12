@@ -1,0 +1,12 @@
+{
+  "name": "rebuild",
+  "private": true,
+  "workspaces": ["apps/api", "apps/web"],
+  "engines": { "node": "24.x" },
+  "scripts": {
+    "dev:api": "npm run dev --workspace @rebuild/api",
+    "dev:web": "npm run dev --workspace @rebuild/web",
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspace @rebuild/api"
+  }
+}
