@@ -31,6 +31,12 @@ docker run --rm -p 127.0.0.1:3000:3000 rebuild-api
 
 Open `http://localhost:3000/health`. If port 3000 is occupied, change the host port in the mapping and in the URL.
 
+## Try Auth0 sign-in in the web app
+
+Register a React Single Page Application in Auth0. Set its callback and logout URLs to `http://localhost:5173/` and its allowed web origin to `http://localhost:5173`. In `apps/web`, copy `.env.example` to `.env.local` and fill in `VITE_AUTH0_DOMAIN` with the tenant domain and `VITE_AUTH0_CLIENT_ID` with the SPA's Client ID. These values are public browser configuration.
+
+Run `npm run dev:web` from the repo root and open `http://localhost:5173/`. Choose **Sign up** or **Log in** to open Auth0 Universal Login. After returning, check that the profile appears, then select **Log out**. Vite uses port 5173 and stops if that port is already occupied.
+
 ## Check Auth0 token validation
 
 Register a Rebuild API with RS256 under **Applications → APIs** in the Auth0 Dashboard. Set `AUTH0_ISSUER` in `.env` to the exact issuer URL with its trailing slash and `AUTH0_AUDIENCE` to the API Identifier. Start or restart the local API with `npm run dev:api`. For the Docker run, pass the two values from your environment with `-e AUTH0_ISSUER -e AUTH0_AUDIENCE` before the image name.
