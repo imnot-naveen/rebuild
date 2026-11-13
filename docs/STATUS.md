@@ -1,12 +1,12 @@
 # Rebuild status
 
-- Updated 12 November 2026, Asia/Colombo
+- Updated 13 November 2026, Asia/Colombo
 - Current milestone M0
 - R00 — DONE
 - R01 — DONE
 - R02a — DONE
-- Next task R02b — TODO
-- Branch `codex/r02a-runnable-foundation`
+- R02b — DONE
+- Branch `codex/r02b-runtime-checks`
 
 ## Progress
 
@@ -18,14 +18,23 @@ The [product contract](PRODUCT-CONTRACT.md) and [data and API contract](DATA-API
 - The shared-request walkthrough uses two lots and a request with 8 allocatable cases. The first reservation leaves 3. The request row lock and updated request version prevent the second allocation for 5.
 - The partial-delivery walkthrough reserves 8 out of 10, delivers 5, cancels to release 3, then reserves and delivers the final 5. Checked the arithmetic against the stock and request invariants. These are design walkthroughs. Database enforcement and integration checks follow in R02, R05 and R07.
 - On 12 November, `npm ci` and `npm run build` passed. The API development and compiled start commands served `/health`, and the Vite development command served the web page. Docker Compose started a healthy PostgreSQL 17.11 and PostGIS 3.7.0 database. `npm test` verified `GET /health` returned HTTP 200 and used node-postgres to insert a geography point, read it back and evaluate `ST_DWithin`.
-- R02b still needs to demonstrate explicit transaction commit and rollback. Practical independent confirmation sources for live relief remain an organizer validation item.
+- Practical independent confirmation sources for live relief remain an organizer validation item.
 
 ## Learning and time
 
 Naveen identified the need for mutually exclusive access to the shared stock lot and serialized updates to the same request across different lots. The assistant drafted the contract and reviewed consistent lock acquisition, version conflicts and automatic release at transaction end. Focused time was not measured. The R01 allowance was two hours.
 
-The assistant implemented and verified the routine R02a scaffolding. The R02a allowance was one hour. Naveen's next implementation exercise is the rollback check using one checked-out database client.
+The assistant implemented and verified the routine R02a scaffolding. The R02a allowance was one hour. For R02b, Naveen wrote and corrected the transaction test. The assistant explained client checkout, SQL parameter binding and the expected rows after rollback, then reviewed and ran the test.
 
 ## Next action
 
-In R02b, check Auth0 token validation, demonstrate explicit commit and rollback, and verify the API's Linux Docker runtime. Attempt a small free-host deployment if the required accounts are ready. Record any provisioning blockers and revise the estimate before expanding scope.
+Review R02b in [PR #6](https://github.com/imnot-naveen/rebuild/pull/6), then start R03 reporting and access. The first workflow needs a persisted resident submission and a test that a different resident cannot read it. Reassess hosted preview provisioning during the first cross-service slice.
+
+## R02b session · 13 November 2026
+
+- Naveen's [transaction test](../apps/api/test/transaction.test.cjs) verified that row 1 survives `COMMIT` and row 2 disappears after `ROLLBACK`, using one checked-out client. The first attempts exposed duplicate declarations and a mismatched SQL parameter index. After those fixes, `npm test` passed all four tests against the local PostGIS database.
+- The assistant added the JWT smoke endpoint and verified RS256 signature, issuer, audience, expiry and subject using locally signed fixtures and a simulated signing-key endpoint. A missing or invalid token returns `401`, and an unavailable signing-key endpoint returns `503`. The workspace build and PostGIS smoke test passed.
+- Built the Linux API image with `docker build -f apps/api/Dockerfile -t rebuild-api:r02b .`. On Docker Desktop, it ran as the `node` user and returned `200` from `/health` and `401` from `/auth/check` without a token. A local idle sample reported about 41 MiB of container memory.
+- Naveen configured the Auth0 development tenant and React SPA. The assistant integrated the official React SDK for login, sign-up, profile and logout, configured the public SPA settings in the ignored local Vite environment, and pinned the dev port to 5173. `npm run build` and all four tests passed. The dev server returned HTTP 200 with the SPA settings loaded, and the tenant's OpenID metadata was reachable. Naveen manually verified Google sign-up and logout from the local React app.
+- Naveen sent an access token issued by the Auth0 development tenant for the Rebuild API and verified HTTP 204 from the local `GET /auth/check` endpoint. The API also returned HTTP 401 for missing and malformed tokens. The assistant supplied the issuer and audience through the API process environment because Windows denied the write to `.env`. The [README](../README.md#check-auth0-token-validation) includes the token check verified on Windows PowerShell 5.1 and PowerShell 7.
+- Hosted preview readiness will be reviewed during the first cross-service slice. Render Free web services cannot receive private network traffic, so the previous single-service preview plan needs a separate deployment decision for Access and Matching.
