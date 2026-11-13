@@ -5,7 +5,7 @@
 - R00 — DONE
 - R01 — DONE
 - R02a — DONE
-- Current task R02b — IN PROGRESS
+- R02b — DONE
 - Branch `codex/r02b-runtime-checks`
 
 ## Progress
@@ -28,7 +28,7 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Register the Rebuild API in the Auth0 development tenant, then configure the issuer and API Identifier locally and send a tenant-issued access token to `GET /auth/check`. Reassess hosted preview provisioning during the first cross-service slice.
+Review R02b in [PR #6](https://github.com/imnot-naveen/rebuild/pull/6), then start R03 reporting and access. The first workflow needs a persisted resident submission and a test that a different resident cannot read it. Reassess hosted preview provisioning during the first cross-service slice.
 
 ## R02b session · 13 November 2026
 
@@ -36,4 +36,5 @@ Register the Rebuild API in the Auth0 development tenant, then configure the iss
 - The assistant added the JWT smoke endpoint and verified RS256 signature, issuer, audience, expiry and subject using locally signed fixtures and a simulated signing-key endpoint. A missing or invalid token returns `401`, and an unavailable signing-key endpoint returns `503`. The workspace build and PostGIS smoke test passed.
 - Built the Linux API image with `docker build -f apps/api/Dockerfile -t rebuild-api:r02b .`. On Docker Desktop, it ran as the `node` user and returned `200` from `/health` and `401` from `/auth/check` without a token. A local idle sample reported about 41 MiB of container memory.
 - Naveen configured the Auth0 development tenant and React SPA. The assistant integrated the official React SDK for login, sign-up, profile and logout, configured the public SPA settings in the ignored local Vite environment, and pinned the dev port to 5173. `npm run build` and all four tests passed. The dev server returned HTTP 200 with the SPA settings loaded, and the tenant's OpenID metadata was reachable. Naveen manually verified Google sign-up and logout from the local React app.
-- The [README](../README.md#check-auth0-token-validation) documents the remaining API registration and live token check. Hosted preview readiness will be reviewed during the first cross-service slice. Render Free web services cannot receive private network traffic, so the previous single-service preview plan needs a separate deployment decision for Access and Matching.
+- Naveen sent an access token issued by the Auth0 development tenant for the Rebuild API and verified HTTP 204 from the local `GET /auth/check` endpoint. The API also returned HTTP 401 for missing and malformed tokens. The assistant supplied the issuer and audience through the API process environment because Windows denied the write to `.env`. The [README](../README.md#check-auth0-token-validation) includes the token check verified on Windows PowerShell 5.1 and PowerShell 7.
+- Hosted preview readiness will be reviewed during the first cross-service slice. Render Free web services cannot receive private network traffic, so the previous single-service preview plan needs a separate deployment decision for Access and Matching.

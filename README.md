@@ -41,16 +41,24 @@ Run `npm run dev:web` from the repo root and open `http://localhost:5173/`. Choo
 
 Register a Rebuild API with RS256 under **Applications → APIs** in the Auth0 Dashboard. Set `AUTH0_ISSUER` in `.env` to the exact issuer URL with its trailing slash and `AUTH0_AUDIENCE` to the API Identifier. Start or restart the local API with `npm run dev:api`. For the Docker run, pass the two values from your environment with `-e AUTH0_ISSUER -e AUTH0_AUDIENCE` before the image name.
 
-Get an access token for the Rebuild API from the API's **Test** tab. This PowerShell 7 check prompts for the token without echoing it and sends it only to the local API.
+Get an access token for the Rebuild API from the API's **Test** tab. This check works in Windows PowerShell 5.1 and PowerShell 7. It prompts for the token without echoing it and sends it only to the local API.
 
 ```powershell
 $rebuildAccessToken = Read-Host 'Paste the Rebuild API access token' -AsSecureString
 try {
+  $credential = [pscredential]::new('rebuild', $rebuildAccessToken)
+  $headers = @{ Authorization = 'Bearer ' + $credential.GetNetworkCredential().Password }
   (Invoke-WebRequest -Uri 'http://127.0.0.1:3000/auth/check' `
-    -Authentication Bearer -Token $rebuildAccessToken `
-    -AllowUnencryptedAuthentication -SkipHttpErrorCheck).StatusCode
+    -Headers $headers -UseBasicParsing -MaximumRedirection 0 -ErrorAction Stop).StatusCode
+} catch {
+  if ($_.Exception.Response) {
+    [int]$_.Exception.Response.StatusCode
+  } else {
+    throw
+  }
 } finally {
   $rebuildAccessToken.Dispose()
+  Remove-Variable headers, credential -ErrorAction SilentlyContinue
 }
 ```
 
