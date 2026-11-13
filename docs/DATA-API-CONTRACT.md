@@ -2,6 +2,8 @@
 
 R01 design · 11 November 2026
 
+The ER diagram is the logical model. The [microservices architecture](ARCHITECTURE.md#service-ownership) identifies which relationships cross service boundaries and which are enforced within a service database.
+
 ## Data model
 
 ```mermaid
@@ -81,6 +83,7 @@ Return errors as `{ code, message, details? }`.
 | `403` | The caller lacks the role required for the action. |
 | `404` | The resource is missing or outside the caller's visibility. |
 | `409` | Stale version, invalid state transition, insufficient stock or allocatable need, or an operation key reused with different input. |
+| `503` | Access cannot establish current permissions, or the matching endpoint cannot obtain a ranking. Retry writes with the original operation key. |
 
 Conflicts may include current versions and quantities visible to the caller. Mutations check the supplied version under lock and return the new version. Changes to request progress or allocatable need also advance the request version. Lot balance changes advance the lot version. Creating an assignment rechecks current lot eligibility and availability because matches come from a snapshot.
 
@@ -88,10 +91,10 @@ Every mutation carries an `Idempotency-Key`. Check current authorization before 
 
 ## Allocation transaction
 
-Use PostgreSQL Read Committed and claim the idempotency key before taking entity locks. Use separate `SELECT ... FOR UPDATE` statements in a consistent order for stock and request quantity changes. The first transaction to acquire a row lock proceeds, and PostgreSQL releases its locks at commit or rollback.
+Check the actor's permission and obtain the proposed volunteer's membership status from Access before starting the database transaction. Use the volunteer eligibility result only for a new assignment. An authorized replay returns its stored result. Use PostgreSQL Read Committed and claim the idempotency key before taking entity locks. Use separate `SELECT ... FOR UPDATE` statements in a consistent order for stock and request quantity changes. The first transaction to acquire a row lock proceeds, and PostgreSQL releases its locks at commit or rollback.
 
 1. Lock the request row. Recheck event, review state and version. Calculate delivered and held quantities in a separate query after acquiring this lock so the totals include any allocation that committed while waiting.
-2. Lock the stock-lot row. Read its current balances. Check event, category, unit, allocatable need, availability and the volunteer's eligibility. A match snapshot can guide the coordinator's choice.
+2. Lock the stock-lot row. Read its current balances. Check event, category, unit, allocatable need and availability. Check that the authorized volunteer membership is for the same event. A match snapshot can guide the coordinator's choice.
 3. Increase the lot's reserved quantity, insert the assignment in the assigned state, advance the request and lot versions, and insert the audit entry. Store the successful response with the idempotency key and commit together. Roll back the whole transaction if a check or write fails.
 
 Delivery and cancellation acquire the same request and lot locks, then lock the assignment before checking its state and version. The parent IDs are immutable and can be read before locking. Acceptance and transit change the assignment state and version only and acquire only the assignment lock. Inventory edits acquire only the lot lock. Retry a bounded number of times on a database deadlock or serialization failure by starting a fresh transaction with the original key. Return business conflicts to the caller for a fresh decision. [PostgreSQL Read Committed and row locks](https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED).
