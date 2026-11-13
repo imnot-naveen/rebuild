@@ -33,6 +33,19 @@ Open `http://localhost:3000/health`. If port 3000 is occupied, change the host p
 
 ## Check Auth0 token validation
 
-Register an Auth0 API with RS256. Set `AUTH0_ISSUER` in `.env` to the exact issuer URL with its trailing slash and `AUTH0_AUDIENCE` to the API Identifier. Restart the local API after changing these values. For the Docker run, pass the two values from your environment with `-e AUTH0_ISSUER -e AUTH0_AUDIENCE` before the image name.
+Register a Rebuild API with RS256 under **Applications → APIs** in the Auth0 Dashboard. Set `AUTH0_ISSUER` in `.env` to the exact issuer URL with its trailing slash and `AUTH0_AUDIENCE` to the API Identifier. Start or restart the local API with `npm run dev:api`. For the Docker run, pass the two values from your environment with `-e AUTH0_ISSUER -e AUTH0_AUDIENCE` before the image name.
 
-Send `GET /auth/check` with an Auth0 API access token in the `Authorization: Bearer …` header. A valid token receives `204`. Missing and invalid tokens receive `401`. A signing-key outage or missing configuration returns `503` when a bearer token is supplied. The smoke route checks token validity. Event membership and role checks belong to the Access service in the first authenticated workflow.
+Get an access token for the Rebuild API from the API's **Test** tab. This PowerShell 7 check prompts for the token without echoing it and sends it only to the local API.
+
+```powershell
+$rebuildAccessToken = Read-Host 'Paste the Rebuild API access token' -AsSecureString
+try {
+  (Invoke-WebRequest -Uri 'http://127.0.0.1:3000/auth/check' `
+    -Authentication Bearer -Token $rebuildAccessToken `
+    -AllowUnencryptedAuthentication -SkipHttpErrorCheck).StatusCode
+} finally {
+  $rebuildAccessToken.Dispose()
+}
+```
+
+A valid token receives `204`. Missing and invalid tokens receive `401`. A signing-key outage or missing configuration returns `503` when a bearer token is supplied. The smoke route checks token validity. Event membership and role checks belong to the Access service in the first authenticated workflow.
