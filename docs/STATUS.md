@@ -1,12 +1,12 @@
 # Rebuild status
 
-- Updated 12 November 2026, Asia/Colombo
+- Updated 13 November 2026, Asia/Colombo
 - Current milestone M0
 - R00 — DONE
 - R01 — DONE
 - R02a — DONE
-- Next task R02b — TODO
-- Branch `codex/r02a-runnable-foundation`
+- Current task R02b — IN PROGRESS
+- Branch `codex/r02b-runtime-checks`
 
 ## Progress
 
@@ -28,4 +28,10 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-In R02b, check Auth0 token validation, demonstrate explicit commit and rollback, and verify the API's Linux Docker runtime. Attempt a small free-host deployment if the required accounts are ready. Record any provisioning blockers and revise the estimate before expanding scope.
+Naveen writes `apps/api/test/transaction.test.cjs` with one checked-out PostgreSQL client, an explicit commit, an explicit rollback and assertions on the final rows. Review the attempt and rerun `npm test`. For the live Auth0 check, configure the tenant issuer and API Identifier in the local environment and send a tenant-issued access token to `GET /auth/check`. Reassess hosted preview provisioning during the first cross-service slice.
+
+## R02b session · 13 November 2026
+
+- The assistant added the JWT smoke endpoint and verified RS256 signature, issuer, audience, expiry and subject using locally signed fixtures and a simulated signing-key endpoint. A missing or invalid token returns `401`, and an unavailable signing-key endpoint returns `503`. The workspace build and PostGIS smoke test passed.
+- Built the Linux API image with `docker build -f apps/api/Dockerfile -t rebuild-api:r02b .`. On Docker Desktop, it ran as the `node` user and returned `200` from `/health` and `401` from `/auth/check` without a token. A local idle sample reported about 41 MiB of container memory.
+- No Auth0 issuer or audience was configured in the local environment, and hosted account readiness was unverified. Live token and hosted deployment checks remain pending. The verifier is a foundation check. Event membership and the independently deployable Access service are planned for the first authenticated workflow.
