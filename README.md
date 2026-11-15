@@ -1,6 +1,6 @@
 # Rebuild
 
-Rebuild is a relief coordination prototype. See the [product contract](docs/PRODUCT-CONTRACT.md), [data and API contract](docs/DATA-API-CONTRACT.md), and [project status](docs/STATUS.md).
+Rebuild is a relief coordination prototype. See the [product contract](docs/PRODUCT-CONTRACT.md), [proposed microservices architecture](docs/ARCHITECTURE.md), [data and API contract](docs/DATA-API-CONTRACT.md), and [project status](docs/STATUS.md).
 
 ## Run locally
 
