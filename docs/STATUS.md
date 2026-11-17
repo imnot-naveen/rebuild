@@ -1,18 +1,19 @@
 # Rebuild status
 
-- Updated 15 November 2026, Asia/Colombo
-- Current milestone M0
+- Updated 17 November 2026, Asia/Colombo
+- Current milestone M1
 - R00 — DONE
 - R01 — DONE
 - R02a — DONE
 - R02b — DONE
-- Branch `codex/microservices-architecture-refresh`
+- R03 — IN_PROGRESS
+- Branch `codex/r03-reporting-access`
 
 ## Progress
 
 The [product contract](PRODUCT-CONTRACT.md) and [data and API contract](DATA-API-CONTRACT.md) are merged into `main`. R02a adds a NestJS API and React/Vite app in an npm workspace pinned to Node.js 24.18.1. The [README](../README.md) covers local setup and checks. GitHub Actions builds both apps and runs the smoke tests against the same Compose service used locally.
 
-Naveen chose a microservices backend. The assistant drafted the [service boundaries and delivery sequence](ARCHITECTURE.md) for review. The R02a foundation is merged and serves as the starting point for Relief Operations. Service separation is planned.
+Naveen chose a microservices backend. The [service boundaries and delivery sequence](ARCHITECTURE.md) are merged into `main`. The existing API is the starting point for Relief Operations.
 
 ## Evidence and open decisions
 
@@ -31,7 +32,22 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Review the proposed service boundaries, then start R03 reporting and access. The first workflow needs a persisted resident submission and a test that a different resident cannot read it. Use the first cross-service slice to verify the Access boundary and reassess hosted preview provisioning and the delivery estimate.
+Review and merge the R03 backend PR targeting `main`. The request list and resident browser screens are the next R03 slice. Reassess hosted preview provisioning and the delivery estimate once the workflow runs through the browser.
+
+## R03 lookup review · 17 November 2026
+
+- Naveen wrote the category join and bound the request, event and authenticated resident IDs as parameters. The first review identified mismatched SQL identifiers, a checked-out client that needs to be returned to the pool, and the missing conversion from a row to `RequestDetail`. The lookup remains Naveen's exercise.
+- The API compiled. Against disposable PostgreSQL 17.6 and PostGIS 3.7.0, the R03 integration test returned `500` for both the owner and the other resident because PostgreSQL could not find `assistance_requests`. Submission, retry handling and the Access outage check passed. The test timed out during teardown with a client still checked out.
+- Naveen switched to `pool.query` and corrected the query identifiers and aliases. The next integration run shut down cleanly. The owner received `200`, and the other resident, another event and an unknown request ID each received `404`. The owner response body assertion still failed at that point. The assistant provided examples for projecting the missing columns and mapping the row to `RequestDetail`.
+- Naveen completed the detail projection and returned `null` for an empty result. The assistant typed the database row and cleaned up formatting. `npm run db:migrate` and all 10 tests in `npm test` passed against PostgreSQL 17.6 and PostGIS 3.7.0. The owner receives the complete response including the exact location. The three denied lookups return `404`.
+
+## R03 preparation · 15 November 2026
+
+- The assistant added the Access service entry point and database-backed event membership check, separate Access and Operations migrations, and the resident submission endpoint. A submission persists the request, audit entry and idempotency response in one database transaction.
+- The detail endpoint calls Access and delegates to the repository exercise. The handoff test expects the owner to get `200` and another resident in the same event to get `404`. R03 remains in progress pending the lookup and browser workflow.
+- Both workspace builds passed. `npm run db:migrate` succeeded with separate Access and Operations databases and credentials. The full API suite ran against a disposable native PostgreSQL 17.6 and PostGIS 3.7.0 instance because Docker Desktop's Linux engine was unavailable.
+- The four R02 checks and four R03 subtests passed. R03 verified persistence and audit ownership, concurrent same-key replay, invalid-input rejection, conflict and revoked-role handling, and `503` when Access was unavailable. The owner-detail assertion returned `404` instead of `200` at the deliberate lookup stub. Rerun after the exercise to verify owner and non-owner behavior together.
+- Work is isolated on the R03 branch from `main` after PR #7. The next PR covers this backend slice after Naveen implements the lookup and the assistant reviews it.
 
 ## R02b session · 13 November 2026
 

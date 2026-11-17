@@ -28,13 +28,13 @@ export class AccessTokenVerifier {
     this.jwks = createRemoteJWKSet(new URL('/.well-known/jwks.json', issuerUrl));
   }
 
-  async verifyAuthorization(authorization: string | undefined): Promise<void> {
+  async verifyAuthorization(authorization: string | undefined): Promise<{ issuer: string; subject: string }> {
     const token = /^Bearer +([^\s,]+)$/i.exec(authorization ?? '')?.[1];
     if (!token) {
       throw new UnauthorizedException('A bearer access token is required');
     }
 
-    if (!this.jwks) {
+    if (!this.jwks || !this.issuer) {
       throw new ServiceUnavailableException('Token validation is unavailable');
     }
 
@@ -61,5 +61,6 @@ export class AccessTokenVerifier {
     if (typeof payload.sub !== 'string' || !payload.sub.trim()) {
       throw new UnauthorizedException('Invalid access token');
     }
+    return { issuer: this.issuer, subject: payload.sub };
   }
 }
