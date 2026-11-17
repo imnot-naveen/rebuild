@@ -109,14 +109,15 @@ test('R03 resident reporting through Access and Relief Operations', async (t) =>
   const ownerToken = await token('auth0|resident-a');
   const otherToken = await token('auth0|resident-b');
 
-  function send(eventId, bearer, { key, body, requestId } = {}) {
+  function send(eventId, bearer, { key, body, requestId, query } = {}) {
     const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
     if (body) {
       headers['content-type'] = 'application/json';
       if (key) headers['idempotency-key'] = key;
     }
-    const path = `/v1/events/${eventId}/requests${requestId ? '/' + requestId : ''}`;
-    return httpFetch(operationsApp.url + path, {
+    const url = new URL(`/v1/events/${eventId}/requests${requestId ? '/' + requestId : ''}`, operationsApp.url);
+    url.search = new URLSearchParams(query).toString();
+    return httpFetch(url, {
       method: body ? 'POST' : 'GET',
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -192,6 +193,63 @@ test('R03 resident reporting through Access and Relief Operations', async (t) =>
       description: validReport.description,
       location: validReport.location,
     });
+  });
+
+  await t.test('request list returns only summaries for the authenticated resident and event', async () => {
+    assert.equal((await send(event)).status, 401);
+    assert.equal((await send(anotherEvent, otherToken)).status, 403);
+    const empty = await send(anotherEvent, ownerToken);
+    assert.equal(empty.status, 200);
+    assert.deepEqual(await empty.json(), { requests: [], nextCursor: null });
+
+    const otherResidentsReport = await send(event, otherToken, {
+      key: randomUUID(),
+      body: validReport,
+    });
+    assert.equal(otherResidentsReport.status, 201, await otherResidentsReport.text());
+    const otherEventsReport = await send(anotherEvent, ownerToken, {
+      key: randomUUID(),
+      body: validReport,
+    });
+    assert.equal(otherEventsReport.status, 201, await otherEventsReport.text());
+
+    const response = await send(event, ownerToken);
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.deepEqual(await response.json(), { requests: [report], nextCursor: null });
+  });
+
+  await t.test('request list pages correctly when timestamps share a millisecond', async () => {
+    const ids = [report.id];
+    for (let index = 0; index < 2; index += 1) {
+      const response = await send(event, ownerToken, { key: randomUUID(), body: validReport });
+      assert.equal(response.status, 201);
+      ids.push((await response.json()).id);
+    }
+    const [lowId, middleId, highId] = ids.sort();
+    await operations.db.query(
+      `UPDATE assistance_request
+          SET created_at = CASE WHEN id = $1 THEN '2026-11-17T12:00:00.000101Z'::timestamptz
+                                ELSE '2026-11-17T12:00:00.000102Z'::timestamptz END
+        WHERE id IN ($1, $2, $3)`,
+      [highId, lowId, middleId],
+    );
+
+    let cursor;
+    for (const [index, id] of [middleId, lowId, highId].entries()) {
+      const query = { limit: '1' };
+      if (cursor) query.cursor = cursor;
+      const response = await send(event, ownerToken, { query });
+      assert.equal(response.status, 200, await response.clone().text());
+      const page = await response.json();
+      assert.deepEqual(page.requests.map((request) => request.id), [id]);
+      if (index < 2) assert.equal(typeof page.nextCursor, 'string');
+      cursor = page.nextCursor;
+    }
+    assert.equal(cursor, null);
+
+    for (const query of [{ limit: '101' }, { cursor: 'invalid' }]) {
+      assert.equal((await send(event, ownerToken, { query })).status, 400);
+    }
   });
 
   await t.test('Operations fails closed when Access is unavailable', async () => {

@@ -12,10 +12,11 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseFilters,
 } from '@nestjs/common';
 import { AccessClient } from './access-client';
-import { parseReport } from './report';
+import { parseReport, parseRequestPage } from './report';
 import { RequestsRepository } from './requests.repository';
 
 const errorCodes: Record<number, string> = {
@@ -56,6 +57,17 @@ export class RequestsController {
       throw new BadRequestException('A single Idempotency-Key of 1–128 visible ASCII characters is required');
     }
     return this.requests.create(eventId.toLowerCase(), userId, key, parseReport(body));
+  }
+
+  @Get()
+  async list(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Query('limit') limit: unknown,
+    @Query('cursor') cursor: unknown,
+  ) {
+    const userId = await this.access.requireResident(eventId, authorization);
+    return this.requests.listOwnedRequests(eventId, userId, parseRequestPage(limit, cursor));
   }
 
   @Get(':requestId')
