@@ -23,6 +23,38 @@ export interface RequestDetail extends RequestSummary {
   location: ReportInput['location'];
 }
 
+export interface RequestPageOptions {
+  limit: number;
+  before?: { createdAt: string; id: string };
+}
+
+const cursorPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\d{3}Z\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+export function parseRequestPage(limit: unknown = '25', cursor?: unknown): RequestPageOptions {
+  if (typeof limit !== 'string' || !/^(?:[1-9]\d?|100)$/.test(limit)) {
+    throw new BadRequestException('Limit must be a whole number from 1 to 100');
+  }
+  const size = Number(limit);
+  if (cursor === undefined) {
+    return { limit: size };
+  }
+
+  if (typeof cursor !== 'string' || !/^[A-Za-z0-9_-]{86}$/.test(cursor)) {
+    throw new BadRequestException('Invalid request cursor');
+  }
+  const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+  const match = cursorPattern.exec(decoded);
+  if (!match) {
+    throw new BadRequestException('Invalid request cursor');
+  }
+  const milliseconds = `${match[1]}Z`;
+  const date = new Date(milliseconds);
+  if (!Number.isFinite(date.valueOf()) || date.toISOString() !== milliseconds || milliseconds.startsWith('0000')) {
+    throw new BadRequestException('Invalid request cursor');
+  }
+  return { limit: size, before: { createdAt: decoded.split('/')[0], id: match[2] } };
+}
+
 function requiredText(value: unknown, name: string, maxLength: number): string {
   if (typeof value !== 'string' || !value.trim() || value.includes('\0') || value.trim().length > maxLength) {
     throw new BadRequestException(`${name} must be text between 1 and ${maxLength} characters`);

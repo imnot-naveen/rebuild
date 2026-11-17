@@ -9,7 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Pool } from 'pg';
-import { ReportInput, RequestDetail, RequestSummary } from './report';
+import { ReportInput, RequestDetail, RequestPageOptions, RequestSummary } from './report';
 
 type RequestDetailRow = Omit<RequestDetail, 'createdAt' | 'location'> & {
   createdAt: Date;
@@ -145,5 +145,39 @@ export class RequestsRepository implements OnModuleDestroy {
       createdAt: createdAt.toISOString(),
       location: { latitude, longitude },
     };
+  }
+
+  async listOwnedRequests(
+    eventId: string,
+    userId: string,
+    { limit, before }: RequestPageOptions,
+  ) {
+    const result = await this.pool.query<
+      Omit<RequestSummary, 'createdAt'> & { createdAt: Date; cursorCreatedAt: string }
+    >(
+      `SELECT r.id, r.version, c.code AS category, c.unit,
+              r.requested_quantity AS quantity, r.review_state AS "reviewState",
+              r.created_at AS "createdAt",
+              to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "cursorCreatedAt"
+         FROM assistance_request r
+         JOIN category c ON r.category_code = c.code
+        WHERE r.event_id = $1 AND r.resident_id = $2
+          AND ($3::timestamptz IS NULL OR (r.created_at, r.id) < ($3::timestamptz, $4::uuid))
+        ORDER BY r.created_at DESC, r.id DESC
+        LIMIT $5`,
+      [eventId, userId, before?.createdAt ?? null, before?.id ?? null, limit + 1],
+    );
+
+    const page = result.rows.slice(0, limit);
+    const requests: RequestSummary[] = page.map(({ createdAt, cursorCreatedAt, ...summary }) => ({
+      ...summary,
+      createdAt: createdAt.toISOString(),
+    }));
+    const last = page.at(-1);
+    // Keep PostgreSQL's microseconds in the cursor. JavaScript Date retains milliseconds.
+    const nextCursor = last && result.rows.length > limit
+      ? Buffer.from(`${last.cursorCreatedAt}/${last.id}`).toString('base64url')
+      : null;
+    return { requests, nextCursor };
   }
 }

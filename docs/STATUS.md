@@ -7,7 +7,7 @@
 - R02a — DONE
 - R02b — DONE
 - R03 — IN_PROGRESS
-- Branch `codex/r03-reporting-access`
+- Branch `codex/r03-my-requests`
 
 ## Progress
 
@@ -32,7 +32,17 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Review and merge the R03 backend PR targeting `main`. The request list and resident browser screens are the next R03 slice. Reassess hosted preview provisioning and the delivery estimate once the workflow runs through the browser.
+Connect the resident browser screens to the submission, list and detail endpoints. Demonstrate a persisted browser submission and invalid-input feedback. Reassess hosted preview provisioning and the delivery estimate once the workflow runs through the browser.
+
+## R03 request list kickoff · 17 November 2026
+
+- [PR #8](https://github.com/imnot-naveen/rebuild/pull/8) is merged into `main`. Its checks cover persisted submissions and detail access for the owner.
+- The assistant prepared an integration case with two residents in one event and one resident in two events. It expects the list to return only the authenticated resident's summary for the selected event, without the description or coordinates.
+- Naveen's exercise is the parameterized list query and its ownership filter. Reuse the database-owned role check from the detail endpoint. The API contract uses descending `(createdAt, id)` order with an opaque cursor. The proposed list response is `{ requests, nextCursor }`, with `nextCursor` set to `null` on the last page.
+- Naveen wrote the category join and bound both the event and resident IDs. The API build passed. The assistant reviewed the query and identified the remaining summary projection, sort order and empty-array behavior. The HTTP integration case still awaits the collection route.
+- Naveen added deterministic ordering and empty-array behavior. The API still builds. The assistant traced the serializer and found that the list still includes the description and exact location. The SQL projection and row mapping need to match `RequestSummary` before the route is wired up.
+- Naveen simplified the timestamp mapping. The assistant removed the description and coordinate columns from the list projection and corrected the query row type. The API built, and the repository query passed against PostgreSQL 17.6 with PostGIS 3.7.0. It returned only the selected resident and event's summary and returned `[]` for an empty scope. The HTTP integration case remains pending the collection route.
+- The assistant wired the collection route through Access and added cursor pagination with the contract's 25 default and 100 maximum. The cursor preserves PostgreSQL microseconds and the request ID. `npm run db:migrate` and all 12 tests in `npm test` passed against PostgreSQL 17.6 with PostGIS 3.7.0. The HTTP cases cover resident and event isolation, missing authentication, missing membership, an empty page, malformed pagination, and pagination across tied timestamps and distinct timestamps within one millisecond.
 
 ## R03 lookup review · 17 November 2026
 
