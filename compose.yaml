@@ -15,5 +15,22 @@ services:
       timeout: 5s
       retries: 30
 
+  access-db:
+    image: postgis/postgis:17-3.7
+    environment:
+      POSTGRES_DB: rebuild_access
+      POSTGRES_USER: rebuild_access
+      POSTGRES_PASSWORD: ${ACCESS_POSTGRES_PASSWORD:-rebuild_access_dev}
+    ports:
+      - "127.0.0.1:${ACCESS_POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - access-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U rebuild_access -d rebuild_access"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
 volumes:
   postgres-data:
+  access-postgres-data:

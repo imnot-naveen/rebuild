@@ -37,6 +37,19 @@ Register a React Single Page Application in Auth0. Set its callback and logout U
 
 Run `npm run dev:web` from the repo root and open `http://localhost:5173/`. Choose **Sign up** or **Log in** to open Auth0 Universal Login. After returning, check that the profile appears, then select **Log out**. Vite uses port 5173 and stops if that port is already occupied.
 
+## Run the R03 backend slice
+
+Copy `.env.example` to `.env` or add the new `ACCESS_*` settings to your existing `.env`. Then run `docker compose up -d --wait` and `npm run db:migrate` from the repository root. To start both servers manually, set `ACCESS_INTERNAL_KEY` to the same locally generated secret for both processes. For example, generate one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. Access defaults to loopback on port 3001. Start it with `npm run dev:access` and start Operations in a second terminal with `npm run dev:api`.
+
+The integration test provisions temporary schemas and synthetic event memberships in the two databases. It uses signed test tokens, so no Auth0 account setup is needed to run it:
+
+```powershell
+npm run build --workspace @rebuild/api
+npm run test:r03 --workspace @rebuild/api
+```
+
+The test covers a persisted submission, retry behavior, and request detail access. The owner receives the report with its location. Another resident, another event, and an unknown request ID each receive `404`.
+
 ## Check Auth0 token validation
 
 Register a Rebuild API with RS256 under **Applications → APIs** in the Auth0 Dashboard. Set `AUTH0_ISSUER` in `.env` to the exact issuer URL with its trailing slash and `AUTH0_AUDIENCE` to the API Identifier. Start or restart the local API with `npm run dev:api`. For the Docker run, pass the two values from your environment with `-e AUTH0_ISSUER -e AUTH0_AUDIENCE` before the image name.

@@ -1,5 +1,8 @@
 import { Controller, Get, Headers, HttpCode, Module } from '@nestjs/common';
 import { AccessTokenVerifier } from './access-token';
+import { AccessClient } from './requests/access-client';
+import { RequestsController } from './requests/requests.controller';
+import { RequestsRepository } from './requests/requests.repository';
 
 @Controller('health')
 class HealthController {
@@ -21,7 +24,7 @@ class AuthCheckController {
 }
 
 @Module({
-  controllers: [HealthController, AuthCheckController],
-  providers: [AccessTokenVerifier],
+  controllers: [HealthController, AuthCheckController, RequestsController],
+  providers: [AccessTokenVerifier, AccessClient, RequestsRepository],
 })
 export class AppModule {}
