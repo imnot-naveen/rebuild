@@ -6,7 +6,7 @@
 - R01 — DONE
 - R02a — DONE
 - R02b — DONE
-- R03 — IN_PROGRESS
+- R03 — DONE
 - Branch `codex/r03-resident-browser`
 
 ## Progress
@@ -32,7 +32,13 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Naveen implements the **Request help** form and submit handler. Review it together, then verify invalid-input feedback and a persisted submission through the browser. Reassess hosted preview provisioning and the delivery estimate after the live browser run.
+Start R04 with the coordinator queue and review transitions. Have Naveen attempt the transition rules and stale-version handling. Confirm the local Auth0 tenant setup and revisit hosted preview provisioning and the delivery estimate.
+
+## R03 browser verification · 18 November 2026
+
+- Naveen wrote the starter quantity field. At his request, the assistant finished the form and submit handler for this session. The browser validates all six fields, sends the bearer token and idempotency key, and refreshes My requests on success. The same open form retains its values and key when a response is lost.
+- Both workspace builds and all 12 API checks passed against temporary PostgreSQL 17.6 and PostGIS 3.7.0. The committed transaction test was run separately. Docker Desktop still returned HTTP 500.
+- Chrome at 390 px ran the signed-in screens with synthetic RS256 resident tokens through the real Access and Operations services. Invalid input showed field and service errors. After the first successful response was withheld, the retry reused the same key and PostGIS contained one report. The owner could open the detail after reload, and a second resident received 404. This demonstrates R03 acceptance. The live Auth0 tenant browser check remains separate and needs the local audience and seeded event configuration.
 
 ## R03 resident browser kickoff · 18 November 2026
 
@@ -41,6 +47,7 @@ Naveen implements the **Request help** form and submit handler. Review it togeth
 - `npm run build` passed, as did the existing health and JWT checks. Headless Chrome with a synthetic identity and API responses verified bearer headers, opening an owned detail, keyboard focus on its heading, loading another page, and the unavailable state for a detail returning `404`.
 - Docker Desktop's Linux engine returned HTTP 500 on its info endpoint. Live Auth0 browser verification against Access, Operations and PostGIS, including persisted submission, remains open. The merged API integration tests cover validation and denied access.
 - Naveen's exercise is the **Request help** form. Use category, unit, whole-number quantity, description, latitude and longitude. Convert quantity and coordinates to numbers and show field errors. Submit to `POST /v1/events/{eventId}/requests` with a bearer token and an `Idempotency-Key`. Reuse that key when retrying the same payload after an uncertain response. Once a submission returns `201`, reopen **My requests** and confirm the new request appears after a reload.
+- Naveen wrote the starter quantity field. The assistant moved it to the web workspace and mounted it in the signed-in screen in the canonical checkout. After syncing dependencies to the lockfile, both workspace builds passed. A Chrome smoke with synthetic sign-in confirmed the form and its quantity label appear above My requests. The original checkout still needs the Auth0 API audience and synthetic event ID for the live browser check. Next, Naveen adds quantity validation.
 
 ## R03 request list kickoff · 17 November 2026
 

@@ -1,6 +1,7 @@
 import { Auth0Provider, useAuth0 } from '@auth0/auth0-react';
-import { StrictMode, useCallback } from 'react';
+import { Fragment, StrictMode, useCallback, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { RequestHelp } from './request-help';
 import { ResidentRequests } from './resident-requests';
 import './styles.css';
 
@@ -15,6 +16,8 @@ function Account() {
     isLoading, isAuthenticated, error, user, loginWithRedirect, logout, getAccessTokenSilently,
   } = useAuth0();
   const getToken = useCallback(() => getAccessTokenSilently(), [getAccessTokenSilently]);
+
+  const [requestListVersion, setRequestListVersion] = useState(0);
 
   if (isLoading) {
     return <p role="status">Checking your sign-in status…</p>;
@@ -33,7 +36,14 @@ function Account() {
           </button>
         </div>
         {auth0Audience && eventId ? (
-          <ResidentRequests key={user?.sub} eventId={eventId} getToken={getToken} />
+          <Fragment key={user?.sub}>
+            <RequestHelp
+              eventId={eventId}
+              getToken={getToken}
+              onSubmitted={() => setRequestListVersion((previous) => previous + 1)}
+            />
+            <ResidentRequests key={requestListVersion} eventId={eventId} getToken={getToken} />
+          </Fragment>
         ) : (
           <p role="status">The relief event or API audience has not been configured.</p>
         )}
