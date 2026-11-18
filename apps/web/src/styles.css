@@ -1,0 +1,117 @@
+body {
+  margin: 0;
+  color: #182e2a;
+  background: #f7faf8;
+  font: 1rem/1.5 system-ui, sans-serif;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem 1rem 2rem;
+}
+
+.account {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  overflow-wrap: anywhere;
+}
+
+button {
+  min-block-size: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  color: inherit;
+  background: white;
+  border: 1px solid #667c72;
+  border-radius: 0.375rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 3px solid #215d4d;
+  outline-offset: 2px;
+}
+
+.requests {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.request-link {
+  display: grid;
+  gap: 0.125rem;
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.request-link[aria-expanded="true"] {
+  background: #e4f2e9;
+}
+
+.request-details {
+  padding: 0 0.75rem;
+}
+
+dt {
+  font-weight: 600;
+}
+
+dd {
+  margin: 0 0 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.description {
+  white-space: pre-wrap;
+}
+
+.request-form fieldset {
+  display: grid;
+  gap: 0.75rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.request-field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.request-field input,
+.request-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-block-size: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #667c72;
+  border-radius: 0.375rem;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+
+.request-field :focus-visible {
+  outline: 3px solid #215d4d;
+  outline-offset: 2px;
+}
+
+.request-field [aria-invalid="true"] {
+  border-color: #a52c24;
+}
+
+.field-error {
+  margin: 0;
+  color: #a52c24;
+}
+
+.form-status:empty {
+  margin: 0;
+}
