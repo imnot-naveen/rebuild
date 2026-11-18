@@ -50,6 +50,12 @@ npm run test:r03 --workspace @rebuild/api
 
 The test covers a persisted submission, retry behavior, and request detail access. The owner receives the report with its location. Another resident, another event, and an unknown request ID each receive `404`.
 
+## Try the resident request screens
+
+In `apps/web/.env.local`, set `VITE_AUTH0_AUDIENCE` to the API Identifier used for `AUTH0_AUDIENCE` in the backend and `VITE_RELIEF_EVENT_ID` to the UUID of the local synthetic event. The Operations database needs that event, and the Access database needs an `app_user` whose issuer and subject match the resident's Auth0 identity and an `event_member` row for the event with role `resident`.
+
+Start Access, Operations and Vite, then sign in as that resident. **My requests** lists the resident's existing reports for the event. Select a report to see its description and coordinates. Vite proxies `/v1` to Operations at `http://127.0.0.1:3000` during development. A deployed frontend needs a same-origin route for `/v1` through the gateway.
+
 ## Check Auth0 token validation
 
 Register a Rebuild API with RS256 under **Applications → APIs** in the Auth0 Dashboard. Set `AUTH0_ISSUER` in `.env` to the exact issuer URL with its trailing slash and `AUTH0_AUDIENCE` to the API Identifier. Start or restart the local API with `npm run dev:api`. For the Docker run, pass the two values from your environment with `-e AUTH0_ISSUER -e AUTH0_AUDIENCE` before the image name.

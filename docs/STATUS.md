@@ -1,13 +1,13 @@
 # Rebuild status
 
-- Updated 17 November 2026, Asia/Colombo
+- Updated 18 November 2026, Asia/Colombo
 - Current milestone M1
 - R00 — DONE
 - R01 — DONE
 - R02a — DONE
 - R02b — DONE
 - R03 — IN_PROGRESS
-- Branch `codex/r03-my-requests`
+- Branch `codex/r03-resident-browser`
 
 ## Progress
 
@@ -32,7 +32,15 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Connect the resident browser screens to the submission, list and detail endpoints. Demonstrate a persisted browser submission and invalid-input feedback. Reassess hosted preview provisioning and the delivery estimate once the workflow runs through the browser.
+Naveen implements the **Request help** form and submit handler. Review it together, then verify invalid-input feedback and a persisted submission through the browser. Reassess hosted preview provisioning and the delivery estimate after the live browser run.
+
+## R03 resident browser kickoff · 18 November 2026
+
+- Started `codex/r03-resident-browser` from `main` at `28d64e0`, after both [PR #8](https://github.com/imnot-naveen/rebuild/pull/8) and [PR #9](https://github.com/imnot-naveen/rebuild/pull/9) merged.
+- The assistant wired the Auth0 API audience and same-origin request client, added Vite's local Operations proxy, and built the mobile **My requests** list and detail panel with cursor pagination.
+- `npm run build` passed, as did the existing health and JWT checks. Headless Chrome with a synthetic identity and API responses verified bearer headers, opening an owned detail, keyboard focus on its heading, loading another page, and the unavailable state for a detail returning `404`.
+- Docker Desktop's Linux engine returned HTTP 500 on its info endpoint. Live Auth0 browser verification against Access, Operations and PostGIS, including persisted submission, remains open. The merged API integration tests cover validation and denied access.
+- Naveen's exercise is the **Request help** form. Use category, unit, whole-number quantity, description, latitude and longitude. Convert quantity and coordinates to numbers and show field errors. Submit to `POST /v1/events/{eventId}/requests` with a bearer token and an `Idempotency-Key`. Reuse that key when retrying the same payload after an uncertain response. Once a submission returns `201`, reopen **My requests** and confirm the new request appears after a reload.
 
 ## R03 request list kickoff · 17 November 2026
 
