@@ -18,7 +18,7 @@ const validReport = {
   location: { latitude: 6.93, longitude: 79.86 },
 };
 
-async function isolatedDatabase(t, url, migration) {
+async function isolatedDatabase(t, url, ...migrations) {
   assert.ok(url, 'Set DATABASE_URL and ACCESS_DATABASE_URL or copy .env.example to .env');
   const schema = 'r03_' + randomUUID().replaceAll('-', '');
   const admin = new Pool({ connectionString: url });
@@ -35,8 +35,10 @@ async function isolatedDatabase(t, url, migration) {
   scoped.searchParams.set('options', `-c search_path=${schema},public`);
   const db = new Pool({ connectionString: scoped.href });
   t.after(() => db.end());
-  const sql = await readFile(join(__dirname, '../../../db/migrations', migration), 'utf8');
-  await db.query(sql);
+  for (const migration of migrations) {
+    const sql = await readFile(join(__dirname, '../../../db/migrations', migration), 'utf8');
+    await db.query(sql);
+  }
   return { db, url: scoped.href };
 }
 
@@ -54,13 +56,15 @@ async function listen(t, module) {
   return { url: await app.getUrl(), close };
 }
 
-test('R03 resident reporting through Access and Relief Operations', async (t) => {
-  const operations = await isolatedDatabase(t, process.env.DATABASE_URL, 'operations/001-resident-requests.sql');
+test('Request reporting and review access through Access and Relief Operations', async (t) => {
+  const operations = await isolatedDatabase(t, process.env.DATABASE_URL,
+    'operations/001-resident-requests.sql', 'operations/002-request-review.sql');
   const access = await isolatedDatabase(t, process.env.ACCESS_DATABASE_URL, 'access/001-resident-membership.sql');
   const event = randomUUID();
   const anotherEvent = randomUUID();
   const owner = randomUUID();
   const otherResident = randomUUID();
+  const coordinator = randomUUID();
   const issuer = 'https://rebuild-r03.example/';
   const audience = 'https://api.rebuild-r03.example';
   const { publicKey, privateKey } = await generateKeyPair('RS256');
@@ -78,13 +82,14 @@ test('R03 resident reporting through Access and Relief Operations', async (t) =>
   await operations.db.query("INSERT INTO category (code, unit) VALUES ('drinking-water', 'cases')");
   await access.db.query(
     `INSERT INTO app_user (id, oidc_issuer, oidc_subject)
-     VALUES ($1, $2, 'auth0|resident-a'), ($3, $2, 'auth0|resident-b')`,
-    [owner, issuer, otherResident],
+     VALUES ($1, $2, 'auth0|resident-a'), ($3, $2, 'auth0|resident-b'), ($4, $2, 'auth0|coordinator')`,
+    [owner, issuer, otherResident, coordinator],
   );
   await access.db.query(
     `INSERT INTO event_member (event_id, user_id, role)
-     VALUES ($1, $2, 'resident'), ($1, $3, 'resident'), ($4, $2, 'resident')`,
-    [event, owner, otherResident, anotherEvent],
+     VALUES ($1, $2, 'resident'), ($1, $3, 'resident'), ($4, $2, 'resident'),
+            ($1, $5, 'coordinator'), ($4, $5, 'coordinator')`,
+    [event, owner, otherResident, anotherEvent, coordinator],
   );
 
   process.env.DATABASE_URL = operations.url;
@@ -108,14 +113,16 @@ test('R03 resident reporting through Access and Relief Operations', async (t) =>
 
   const ownerToken = await token('auth0|resident-a');
   const otherToken = await token('auth0|resident-b');
+  const coordinatorToken = await token('auth0|coordinator');
 
-  function send(eventId, bearer, { key, body, requestId, query } = {}) {
+  function send(eventId, bearer, { key, body, requestId, action, query } = {}) {
     const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
     if (body) {
       headers['content-type'] = 'application/json';
       if (key) headers['idempotency-key'] = key;
     }
-    const url = new URL(`/v1/events/${eventId}/requests${requestId ? '/' + requestId : ''}`, operationsApp.url);
+    const path = [requestId, action].filter(Boolean).join('/');
+    const url = new URL(`/v1/events/${eventId}/requests${path ? '/' + path : ''}`, operationsApp.url);
     url.search = new URLSearchParams(query).toString();
     return httpFetch(url, {
       method: body ? 'POST' : 'GET',
@@ -192,6 +199,7 @@ test('R03 resident reporting through Access and Relief Operations', async (t) =>
       ...report,
       description: validReport.description,
       location: validReport.location,
+      activity: [],
     });
   });
 
@@ -250,6 +258,164 @@ test('R03 resident reporting through Access and Relief Operations', async (t) =>
     for (const query of [{ limit: '101' }, { cursor: 'invalid' }]) {
       assert.equal((await send(event, ownerToken, { query })).status, 400);
     }
+  });
+
+  await t.test('coordinator reads the event queue and detail while resident ownership still applies', async () => {
+    const { rows: [otherReport] } = await operations.db.query(
+      `UPDATE assistance_request SET review_state = 'needs_clarification'
+        WHERE event_id = $1 AND resident_id = $2
+        RETURNING id`,
+      [event, otherResident],
+    );
+    assert.ok(otherReport);
+
+    const queue = await send(event, coordinatorToken);
+    assert.equal(queue.status, 200, await queue.clone().text());
+    const { requests, nextCursor } = await queue.json();
+    assert.equal(requests.length, 4);
+    assert.equal(nextCursor, null);
+    assert.ok(requests.some(({ id }) => id === report.id));
+    assert.ok(requests.some(({ id }) => id === otherReport.id));
+    assert.ok(requests.every((row) => !('location' in row) && !('description' in row)));
+
+    const query = { reviewState: 'needs_clarification' };
+    const filtered = await send(event, coordinatorToken, { query });
+    assert.equal(filtered.status, 200);
+    assert.deepEqual((await filtered.json()).requests.map(({ id }) => id), [otherReport.id]);
+    const residentQueue = await send(event, ownerToken, { query });
+    assert.equal(residentQueue.status, 200);
+    assert.deepEqual(await residentQueue.json(), { requests: [], nextCursor: null });
+    assert.equal((await send(event, coordinatorToken, { query: { reviewState: 'unknown' } })).status, 400);
+
+    const detail = await send(event, coordinatorToken, { requestId: otherReport.id });
+    assert.equal(detail.status, 200);
+    assert.deepEqual((await detail.json()).location, validReport.location);
+    assert.equal((await send(anotherEvent, coordinatorToken, { requestId: otherReport.id })).status, 404);
+    assert.equal((await send(event, coordinatorToken, { key: randomUUID(), body: validReport })).status, 403);
+    assert.deepEqual(await (await send(event, coordinatorToken, { requestId: 'access' })).json(), { role: 'coordinator' });
+    assert.deepEqual(await (await send(event, ownerToken, { requestId: 'access' })).json(), { role: 'resident' });
+
+    await access.db.query(
+      "UPDATE event_member SET role = 'volunteer' WHERE event_id = $1 AND user_id = $2",
+      [event, coordinator],
+    );
+    assert.equal((await send(event, coordinatorToken)).status, 403);
+    assert.equal((await send(event, coordinatorToken, { requestId: otherReport.id })).status, 403);
+    assert.equal((await send(event, coordinatorToken, { requestId: 'access' })).status, 403);
+    await access.db.query(
+      "UPDATE event_member SET role = 'coordinator' WHERE event_id = $1 AND user_id = $2",
+      [event, coordinator],
+    );
+  });
+
+  const forReview = await send(event, ownerToken, { key: randomUUID(), body: validReport });
+  assert.equal(forReview.status, 201);
+  const reviewReport = await forReview.json();
+
+  function review(bearer, action, body, { requestId = reviewReport.id, eventId = event, key = randomUUID() } = {}) {
+    return send(eventId, bearer, { requestId, action, key, body });
+  }
+
+  await t.test('concurrent clarification, replay, and the owning resident reply keep one versioned history', async () => {
+    const questions = [
+      { key: randomUUID(), body: { version: 1, question: 'Can you confirm the delivery entrance?' } },
+      { key: randomUUID(), body: { version: 1, question: 'When can you receive water?' } },
+    ];
+    assert.equal((await review(ownerToken, 'clarifications', questions[0].body)).status, 403);
+    assert.equal((await review(coordinatorToken, 'clarifications', { version: 1, question: '   ' })).status, 400);
+
+    const outcomes = await Promise.all(questions.map(({ key, body }) => review(coordinatorToken, 'clarifications', body, { key })));
+    assert.deepEqual(outcomes.map(({ status }) => status).sort(), [200, 409]);
+    const success = outcomes.findIndex(({ status }) => status === 200);
+    const saved = await outcomes[success].json();
+    const winningQuestion = questions[success];
+    assert.deepEqual(saved, { ...reviewReport, reviewState: 'needs_clarification', version: 2 });
+    assert.equal((await outcomes[1 - success].json()).message, 'The request version has changed');
+    const replay = await review(coordinatorToken, 'clarifications', winningQuestion.body, winningQuestion);
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), saved);
+    assert.equal((await review(coordinatorToken, 'clarifications', { version: 2, question: 'Another question?' })).status, 409);
+    assert.equal((await review(coordinatorToken, 'clarifications',
+      { ...winningQuestion.body, question: 'Changed question' }, winningQuestion)).status, 409);
+    const originalDetail = await (await send(event, ownerToken, { requestId: reviewReport.id })).json();
+    assert.equal(originalDetail.activity.length, 1);
+    assert.equal(originalDetail.activity[0].text, winningQuestion.body.question);
+
+    const reply = { version: 2, reply: 'Use the north entrance.' };
+    assert.equal((await review(otherToken, 'replies', reply)).status, 404);
+    assert.equal((await review(coordinatorToken, 'replies', reply)).status, 403);
+    const answer = await review(ownerToken, 'replies', reply);
+    assert.equal(answer.status, 200, await answer.clone().text());
+    assert.deepEqual(await answer.json(), { ...reviewReport, version: 3 });
+    const list = await (await send(event, ownerToken)).json();
+    const updated = list.requests.find(({ id }) => id === reviewReport.id);
+    assert.equal(updated.version, 3);
+    assert.equal(updated.reviewState, 'submitted');
+
+    const { rows } = await operations.db.query(
+      'SELECT operation, actor_id FROM audit_entry WHERE request_id = $1 ORDER BY created_at', [reviewReport.id],
+    );
+    assert.deepEqual(rows, [
+      { operation: 'request.create', actor_id: owner },
+      { operation: 'request.clarify', actor_id: coordinator },
+      { operation: 'request.reply', actor_id: owner },
+    ]);
+    const failed = await operations.db.query('SELECT 1 FROM idempotency_record WHERE operation_key = $1',
+      [questions[1 - success].key]);
+    assert.equal(failed.rowCount, 0);
+  });
+
+  await t.test('verification and duplicate rejection persist while protected notes stay coordinator-only', async () => {
+    const command = {
+      version: 3,
+      confirmedQuantity: 6,
+      urgency: 'urgent',
+      source: { type: 'shelter_intake', reference: 'DEMO-42' },
+      rationale: 'Intake and organizer confirmed the address and the requested need.',
+    };
+    assert.equal((await review(ownerToken, 'verification', command)).status, 403);
+    assert.equal((await review(coordinatorToken, 'verification', command, { eventId: anotherEvent })).status, 404);
+    assert.equal((await review(coordinatorToken, 'verification', { ...command, urgency: 'unknown' })).status, 400);
+    const key = randomUUID();
+    const verification = await review(coordinatorToken, 'verification', command, { key });
+    assert.equal(verification.status, 200, await verification.clone().text());
+    assert.deepEqual(await verification.json(), {
+      ...reviewReport, version: 4, reviewState: 'verified', verifiedQuantity: 6, verifiedUrgency: 'urgent',
+    });
+    const coordinatorDetail = await (await send(event, coordinatorToken, { requestId: reviewReport.id })).json();
+    assert.deepEqual(coordinatorDetail.activity.map(({ action }) => action), ['clarify', 'reply', 'verify']);
+    assert.deepEqual(coordinatorDetail.activity.at(-1).source, command.source);
+    assert.equal(coordinatorDetail.activity.at(-1).rationale, command.rationale);
+    const residentDetail = await (await send(event, ownerToken, { requestId: reviewReport.id })).json();
+    assert.equal(residentDetail.reviewState, 'verified');
+    assert.equal(residentDetail.activity.at(-1).confirmedQuantity, 6);
+    assert.ok(residentDetail.activity.every((entry) => !('source' in entry || 'rationale' in entry || 'actorId' in entry)));
+    const queue = await send(event, coordinatorToken, { query: { reviewState: 'verified', urgency: 'urgent' } });
+    assert.equal(queue.status, 200);
+    assert.deepEqual((await queue.json()).requests.map(({ id }) => id), [reviewReport.id]);
+    assert.equal((await review(coordinatorToken, 'rejection', { version: 4, reason: 'Already verified' })).status, 409);
+
+    const newReport = await (await send(event, otherToken, { body: validReport, key: randomUUID() })).json();
+    const foreign = await (await send(anotherEvent, coordinatorToken)).json();
+    const rejection = { version: 1, reason: 'Already recorded for this household.', duplicateOfRequestId: reviewReport.id };
+    assert.equal((await review(coordinatorToken, 'rejection', { ...rejection, duplicateOfRequestId: foreign.requests[0].id },
+      { requestId: newReport.id })).status, 404);
+    const rejected = await review(coordinatorToken, 'rejection', rejection, { requestId: newReport.id });
+    assert.equal(rejected.status, 200, await rejected.clone().text());
+    assert.equal((await rejected.json()).reviewState, 'rejected');
+    const rejectedDetail = await (await send(event, otherToken, { requestId: newReport.id })).json();
+    assert.equal(rejectedDetail.activity[0].text, rejection.reason);
+    assert.equal(rejectedDetail.activity[0].relatedRequestId, undefined);
+    const linked = await review(coordinatorToken, 'related-reports', { version: 4, relatedRequestId: newReport.id });
+    assert.equal(linked.status, 200, await linked.clone().text());
+    assert.equal((await linked.json()).reviewState, 'verified');
+    const linkedDetail = await (await send(event, coordinatorToken, { requestId: reviewReport.id })).json();
+    assert.equal(linkedDetail.activity.at(-1).relatedRequestId, newReport.id);
+    assert.equal((await (await send(event, ownerToken, { requestId: reviewReport.id })).json()).activity.length, 3);
+
+    await access.db.query("UPDATE event_member SET role = 'volunteer' WHERE event_id = $1 AND user_id = $2",
+      [event, coordinator]);
+    assert.equal((await review(coordinatorToken, 'verification', command, { key })).status, 403);
   });
 
   await t.test('Operations fails closed when Access is unavailable', async () => {

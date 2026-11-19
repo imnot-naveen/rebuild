@@ -1,8 +1,10 @@
 import { Auth0Provider, useAuth0 } from '@auth0/auth0-react';
-import { Fragment, StrictMode, useCallback, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RequestHelp } from './request-help';
-import { ResidentRequests } from './resident-requests';
+import { readRequest } from './resident-api';
+import type { GetToken, ReviewRole } from './resident-api';
+import { RequestWorkspace } from './resident-requests';
 import './styles.css';
 
 const auth0Domain = import.meta.env.VITE_AUTH0_DOMAIN;
@@ -11,13 +13,47 @@ const auth0Audience = import.meta.env.VITE_AUTH0_AUDIENCE;
 const eventId = import.meta.env.VITE_RELIEF_EVENT_ID;
 const homeUrl = new URL('/', window.location.origin).href;
 
+function EventRequests({ eventId, getToken }: { eventId: string; getToken: GetToken }) {
+  const [access, setAccess] = useState<ReviewRole>();
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [requestListVersion, setRequestListVersion] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void readRequest<{ role: ReviewRole }>(eventId, getToken, '/access', controller.signal)
+      .then(({ role }) => {
+        if (!controller.signal.aborted) setAccess(role);
+      })
+      .catch((reason: Error) => {
+        if (!controller.signal.aborted) setError(reason.message);
+      });
+    return () => controller.abort();
+  }, [eventId, getToken, attempt]);
+
+  if (error) return (
+    <>
+      <p role="alert">{error}</p>
+      <button type="button" onClick={() => { setError(''); setAttempt((value) => value + 1); }}>Try again</button>
+    </>
+  );
+  if (!access) return <p role="status">Checking event access…</p>;
+  return (
+    <>
+      {access === 'resident' && (
+        <RequestHelp eventId={eventId} getToken={getToken}
+          onSubmitted={() => setRequestListVersion((previous) => previous + 1)} />
+      )}
+      <RequestWorkspace key={requestListVersion} eventId={eventId} getToken={getToken} role={access} />
+    </>
+  );
+}
+
 function Account() {
   const {
     isLoading, isAuthenticated, error, user, loginWithRedirect, logout, getAccessTokenSilently,
   } = useAuth0();
   const getToken = useCallback(() => getAccessTokenSilently(), [getAccessTokenSilently]);
-
-  const [requestListVersion, setRequestListVersion] = useState(0);
 
   if (isLoading) {
     return <p role="status">Checking your sign-in status…</p>;
@@ -36,14 +72,7 @@ function Account() {
           </button>
         </div>
         {auth0Audience && eventId ? (
-          <Fragment key={user?.sub}>
-            <RequestHelp
-              eventId={eventId}
-              getToken={getToken}
-              onSubmitted={() => setRequestListVersion((previous) => previous + 1)}
-            />
-            <ResidentRequests key={requestListVersion} eventId={eventId} getToken={getToken} />
-          </Fragment>
+          <EventRequests key={user?.sub} eventId={eventId} getToken={getToken} />
         ) : (
           <p role="status">The relief event or API audience has not been configured.</p>
         )}

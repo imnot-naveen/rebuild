@@ -1,13 +1,14 @@
 # Rebuild status
 
-- Updated 18 November 2026, Asia/Colombo
+- Updated 19 November 2026, Asia/Colombo
 - Current milestone M1
 - R00 — DONE
 - R01 — DONE
 - R02a — DONE
 - R02b — DONE
 - R03 — DONE
-- Branch `codex/r03-resident-browser`
+- R04 — DONE
+- Branch `codex/r04-coordinator-review`
 
 ## Progress
 
@@ -32,7 +33,22 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Start R04 with the coordinator queue and review transitions. Have Naveen attempt the transition rules and stale-version handling. Confirm the local Auth0 tenant setup and revisit hosted preview provisioning and the delivery estimate.
+Start R05 with inventory and stock reservation. Have Naveen sketch the request and lot lock order and the shared-lot race before implementing the reservation transaction. Review hosted preview provisioning and the remaining estimate at the M1 review.
+
+## R04 review workflow closeout · 19 November 2026
+
+- At Naveen's request, the assistant finished the review transaction and browser workflow using his clarification, reply and stale-version checks. Operations serializes writes to the same request and commits its state, version, activity, audit and idempotency response together. The coordinator can clarify, verify, reject a duplicate or link a related report. The owning resident can answer a clarification and see the updated status and resident-visible history.
+- The demo uses routine, urgent and critical urgency, with synthetic shelter intake records and field lead confirmations. Confirm the urgency scale and independent confirmation sources with an organizer before live use. The local Auth0 audience and event still need configuration for a live tenant walkthrough.
+- Both workspace builds passed. Migrations succeeded twice against disposable PostgreSQL 17.6 and PostGIS 3.7.0. All 15 API checks passed, using the committed rollback test because the working copy has a SQL typo. The R04 cases verify concurrent requests, safe replay, revoked roles, resident ownership, urgency filtering, and verification note privacy.
+- Headless Chrome at 390 px used synthetic RS256 identities against the real Access and Operations services. A coordinator asked a question, the resident replied, and the coordinator verified the request. The resident saw the updated status and confirmed quantity, and the confirmation reference and rationale only appeared for the coordinator.
+
+## R04 coordinator review kickoff · 19 November 2026
+
+- Started from `origin/main` at `cc118c5` after [PR #10](https://github.com/imnot-naveen/rebuild/pull/10) merged.
+- The assistant wired the coordinator's event-wide queue and detail through the existing Access and Operations endpoints. `GET /v1/events/{eventId}/requests` accepts `reviewState` alongside the existing pagination parameters. Residents still read only their own reports. Added an integration case for event and role scope, the filter and the list projection.
+- Both workspace builds and the database migrations passed. Against disposable PostgreSQL 17.6 and PostGIS 3.7.0, 12 of 13 checks passed, including the new coordinator case. The only failure was the existing uncommitted SQL typo in the rollback test. Both pre-existing local test edits were preserved.
+- Naveen wrote the clarification, reply, and version checks in [review.ts](../apps/api/src/requests/review.ts) with step-by-step coaching. The API build passed. Direct assertions verified both allowed transitions, a stale version, and an invalid transition at the current version. The helper still needs to be called by the database write path.
+- Review writes, activity history, the verified urgency filter and the browser workflow remain open. Agree on the urgency values and confirmation-source fields during the transition review. The local web Auth0 audience and synthetic event ID still need configuration for live tenant verification. Revisit hosted preview provisioning and the delivery estimate at the M1 review.
 
 ## R03 browser verification · 18 November 2026
 
