@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import type { ReviewCommand, Urgency } from './review';
 
 export interface ReportInput {
   category: string;
@@ -13,19 +14,43 @@ export interface RequestSummary {
   category: string;
   unit: string;
   quantity: number;
-  reviewState: string;
+  reviewState: ReviewState;
   version: number;
   createdAt: string;
+  verifiedQuantity?: number;
+  verifiedUrgency?: Urgency;
 }
 
 export interface RequestDetail extends RequestSummary {
   description: string;
   location: ReportInput['location'];
+  activity: {
+    version: number;
+    action: ReviewCommand['action'];
+    createdAt: string;
+    text?: string;
+    actorId?: string;
+    source?: { type: string; reference: string };
+    rationale?: string;
+    relatedRequestId?: string;
+    confirmedQuantity?: number;
+    urgency?: Urgency;
+  }[];
 }
+
+export type ReviewState = 'submitted' | 'needs_clarification' | 'verified' | 'rejected';
 
 export interface RequestPageOptions {
   limit: number;
   before?: { createdAt: string; id: string };
+}
+
+export function parseReviewState(value: unknown): ReviewState | undefined {
+  if (value === undefined || value === 'submitted' || value === 'needs_clarification' ||
+      value === 'verified' || value === 'rejected') {
+    return value;
+  }
+  throw new BadRequestException('Invalid review state');
 }
 
 const cursorPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\d{3}Z\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
@@ -55,7 +80,7 @@ export function parseRequestPage(limit: unknown = '25', cursor?: unknown): Reque
   return { limit: size, before: { createdAt: decoded.split('/')[0], id: match[2] } };
 }
 
-function requiredText(value: unknown, name: string, maxLength: number): string {
+export function requiredText(value: unknown, name: string, maxLength: number): string {
   if (typeof value !== 'string' || !value.trim() || value.includes('\0') || value.trim().length > maxLength) {
     throw new BadRequestException(`${name} must be text between 1 and ${maxLength} characters`);
   }

@@ -55,7 +55,8 @@ Paths are relative to `/v1/events/{eventId}`. Resolve the actor and role from th
 | Method and path | Actor and input | Success |
 |---|---|---|
 | `POST /requests` | Resident. Category, unit, quantity, description and location. | `201` submitted request |
-| `GET /requests`, `GET /requests/{id}` | Resident or coordinator. List supports review state and verified urgency filters. | `200` scoped reports or report detail with visible activity |
+| `GET /requests/access` | Resident or coordinator. Resolve the event role for the browser workspace. | `200` with `{ role }` |
+| `GET /requests`, `GET /requests/{id}` | Resident or coordinator. List supports `reviewState` and `urgency` filters. | `200` scoped reports or report detail with visible activity |
 | `POST /requests/{id}/clarifications` | Coordinator. Version and question. Submitted → needs clarification. | `200` updated request |
 | `POST /requests/{id}/replies` | Owning resident. Version and reply. Needs clarification → submitted. | `200` updated request |
 | `POST /requests/{id}/verification` | Coordinator. Version, confirmed quantity, urgency, source and rationale. Confirm need and location within the active event. Submitted → verified. | `200` updated request |
@@ -73,6 +74,8 @@ Paths are relative to `/v1/events/{eventId}`. Resolve the actor and role from th
 | `POST /assignments/{id}/cancellation` | Coordinator. Version and reason. Active → cancelled. | `200` updated assignment |
 
 Validate IDs, enum values, required nonblank text, integer quantities in the database range, the category-unit pair, and finite longitude and latitude in range. A lot can be adjusted down to zero if it has zero deliveries and reservations. Persist server-generated IDs and timestamps. List endpoints use an opaque cursor over `(createdAt, id)` in descending order, with a default limit of 25 and maximum of 100. Keep the same filters on subsequent pages.
+
+The demo accepts `routine`, `urgent` and `critical` for verification and the queue's urgency filter. A verification carries `confirmedQuantity`, `urgency`, `source` with a `type` and synthetic `reference`, and `rationale`. The demo source types are `shelter_intake` and `field_lead`. Review actions advance the request version and append activity with that version. Coordinator detail includes protected verification notes, actor IDs and related request IDs. Resident detail includes the questions, replies, confirmed quantity and urgency, and any resident-facing rejection reason.
 
 Return errors as `{ code, message, details? }`.
 

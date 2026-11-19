@@ -25,6 +25,7 @@ async function main() {
     throw new Error('Configure separate DATABASE_URL and ACCESS_DATABASE_URL connections');
   }
   await migrate(operations, 'operations/001-resident-requests.sql');
+  await migrate(operations, 'operations/002-request-review.sql');
   await migrate(access, 'access/001-resident-membership.sql');
 }
 

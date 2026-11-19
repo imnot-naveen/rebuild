@@ -37,7 +37,7 @@ Register a React Single Page Application in Auth0. Set its callback and logout U
 
 Run `npm run dev:web` from the repo root and open `http://localhost:5173/`. Choose **Sign up** or **Log in** to open Auth0 Universal Login. After returning, check that the profile appears, then select **Log out**. Vite uses port 5173 and stops if that port is already occupied.
 
-## Run the R03 backend slice
+## Run the reporting and review backend
 
 Copy `.env.example` to `.env` or add the new `ACCESS_*` settings to your existing `.env`. Then run `docker compose up -d --wait` and `npm run db:migrate` from the repository root. To start both servers manually, set `ACCESS_INTERNAL_KEY` to the same locally generated secret for both processes. For example, generate one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. Access defaults to loopback on port 3001. Start it with `npm run dev:access` and start Operations in a second terminal with `npm run dev:api`.
 
@@ -48,13 +48,15 @@ npm run build --workspace @rebuild/api
 npm run test:r03 --workspace @rebuild/api
 ```
 
-The test covers a persisted submission, retry behavior, and request detail access. The owner receives the report with its location. Another resident, another event, and an unknown request ID each receive `404`.
+The test covers persisted submissions, retry behavior, role and event access, and concurrent review actions. Another resident, another event, and an unknown request ID each receive `404` when outside the caller's visibility.
 
-## Try the resident request screens
+## Try the request and review screens
 
 In `apps/web/.env.local`, set `VITE_AUTH0_AUDIENCE` to the API Identifier used for `AUTH0_AUDIENCE` in the backend and `VITE_RELIEF_EVENT_ID` to the UUID of the local synthetic event. The Operations database needs that event, and the Access database needs an `app_user` whose issuer and subject match the resident's Auth0 identity and an `event_member` row for the event with role `resident`.
 
 Start Access, Operations and Vite, then sign in as that resident. Use **Request help** to submit a synthetic report. Enter a category and unit configured in Operations, such as `drinking-water` and `cases` if that pair is seeded. After submission, **My requests** refreshes. Select the report to see its description and coordinates. If the response is lost, submit the same report again from the same open form to retry with the original key.
+
+Seed a second Auth0 identity and give it a `coordinator` membership for the same event. Sign in as that coordinator and open the report in **Coordinator queue**. Ask for clarification, sign back in as the resident and reply, then verify the request as the coordinator with a confirmed quantity, urgency and synthetic source reference. The resident sees the resulting status and activity. The confirmation source and rationale are visible to coordinators. If a review conflicts with a newer version, refresh the request details and review the current state before submitting again.
 
 Vite proxies `/v1` to Operations at `http://127.0.0.1:3000` during development. A deployed frontend needs a same-origin route for `/v1` through the gateway.
 

@@ -86,7 +86,8 @@ dd {
 }
 
 .request-field input,
-.request-field textarea {
+.request-field textarea,
+.request-field select {
   box-sizing: border-box;
   width: 100%;
   min-block-size: 2.75rem;
@@ -114,4 +115,25 @@ dd {
 
 .form-status:empty {
   margin: 0;
+}
+
+.request-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+}
+
+.request-details > .request-field {
+  margin-block-end: 0.75rem;
+}
+
+.request-activity {
+  display: grid;
+  gap: 0.75rem;
+  padding-inline-start: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.request-activity p {
+  margin-block: 0.25rem;
 }

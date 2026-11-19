@@ -7,6 +7,7 @@ import {
   ExceptionFilter,
   Get,
   Headers,
+  HttpCode,
   HttpException,
   NotFoundException,
   Param,
@@ -16,8 +17,9 @@ import {
   UseFilters,
 } from '@nestjs/common';
 import { AccessClient } from './access-client';
-import { parseReport, parseRequestPage } from './report';
+import { parseReport, parseRequestPage, parseReviewState } from './report';
 import { RequestsRepository } from './requests.repository';
+import { parseReviewAction, parseReviewCommand, parseUrgency } from './review';
 
 const errorCodes: Record<number, string> = {
   400: 'invalid_input',
@@ -37,6 +39,13 @@ class ReportingErrorFilter implements ExceptionFilter<HttpException> {
   }
 }
 
+function requireIdempotencyKey(key?: string): string {
+  if (!key || !/^[!-+\x2D-~]{1,128}$/.test(key)) {
+    throw new BadRequestException('A single Idempotency-Key of 1–128 visible ASCII characters is required');
+  }
+  return key;
+}
+
 @Controller('v1/events/:eventId/requests')
 @UseFilters(ReportingErrorFilter)
 export class RequestsController {
@@ -53,10 +62,27 @@ export class RequestsController {
     @Body() body: unknown,
   ) {
     const userId = await this.access.requireResident(eventId, authorization);
-    if (!key || !/^[!-+\x2D-~]{1,128}$/.test(key)) {
-      throw new BadRequestException('A single Idempotency-Key of 1–128 visible ASCII characters is required');
-    }
-    return this.requests.create(eventId.toLowerCase(), userId, key, parseReport(body));
+    return this.requests.create(eventId.toLowerCase(), userId, requireIdempotencyKey(key), parseReport(body));
+  }
+
+  @Post(':requestId/:action')
+  @HttpCode(200)
+  async review(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @Param('action') route: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const action = parseReviewAction(route);
+    const userId = action === 'reply'
+      ? await this.access.requireResident(eventId, authorization)
+      : await this.access.requireCoordinator(eventId, authorization);
+    return this.requests.review(
+      eventId.toLowerCase(), requestId.toLowerCase(), userId, requireIdempotencyKey(key), route,
+      parseReviewCommand(action, body),
+    );
   }
 
   @Get()
@@ -65,9 +91,22 @@ export class RequestsController {
     @Headers('authorization') authorization: string | undefined,
     @Query('limit') limit: unknown,
     @Query('cursor') cursor: unknown,
+    @Query('reviewState') reviewState: unknown,
+    @Query('urgency') urgency: unknown,
   ) {
-    const userId = await this.access.requireResident(eventId, authorization);
-    return this.requests.listOwnedRequests(eventId, userId, parseRequestPage(limit, cursor));
+    const reader = await this.access.requireRequestReader(eventId, authorization);
+    return this.requests.listVisibleRequests(
+      eventId, reader, parseRequestPage(limit, cursor), parseReviewState(reviewState), parseUrgency(urgency),
+    );
+  }
+
+  @Get('access')
+  async workspaceAccess(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Headers('authorization') authorization: string | undefined,
+  ) {
+    const { role } = await this.access.requireRequestReader(eventId, authorization);
+    return { role };
   }
 
   @Get(':requestId')
@@ -76,8 +115,8 @@ export class RequestsController {
     @Param('requestId', ParseUUIDPipe) requestId: string,
     @Headers('authorization') authorization: string | undefined,
   ) {
-    const userId = await this.access.requireResident(eventId, authorization);
-    const request = await this.requests.findOwnedRequest(eventId, requestId, userId);
+    const reader = await this.access.requireRequestReader(eventId, authorization);
+    const request = await this.requests.findVisibleRequest(eventId, requestId, reader);
     if (!request) {
       throw new NotFoundException('Request not found');
     }
