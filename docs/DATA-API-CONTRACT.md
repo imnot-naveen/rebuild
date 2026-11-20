@@ -77,6 +77,10 @@ Validate IDs, enum values, required nonblank text, integer quantities in the dat
 
 The demo accepts `routine`, `urgent` and `critical` for verification and the queue's urgency filter. A verification carries `confirmedQuantity`, `urgency`, `source` with a `type` and synthetic `reference`, and `rationale`. The demo source types are `shelter_intake` and `field_lead`. Review actions advance the request version and append activity with that version. Coordinator detail includes protected verification notes, actor IDs and related request IDs. Resident detail includes the questions, replies, confirmed quantity and urgency, and any resident-facing rejection reason.
 
+Stock entry accepts `category`, `unit`, `receivedQuantity` and `location` with `latitude` and `longitude`. Create, list and detail return `receivedQuantity`, `reservedQuantity`, `deliveredQuantity` and `availableQuantity`. The list returns `{ stockLots, nextCursor }`. Exact stock location is available through coordinator detail.
+
+Assignment creation accepts `requestId`, `requestVersion`, `lotId`, `volunteerId`, `quantity` and optional `instructions` of up to 2,000 characters. The response includes the assignment's ID, version and state, the new request and lot versions, the lot's reserved and available quantities, and the request's allocatable quantity. A stale request returns `409 STALE_VERSION` with its current `version`. Quantity conflicts return `409 INSUFFICIENT_NEED` or `409 INSUFFICIENT_STOCK` with the current allocatable or available quantity. A user without a volunteer membership in the event returns `400 INVALID_VOLUNTEER`.
+
 Return errors as `{ code, message, details? }`.
 
 | Status | When to return it |

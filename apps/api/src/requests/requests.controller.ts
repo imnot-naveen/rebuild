@@ -1,14 +1,9 @@
 import {
-  ArgumentsHost,
-  BadRequestException,
   Body,
-  Catch,
   Controller,
-  ExceptionFilter,
   Get,
   Headers,
   HttpCode,
-  HttpException,
   NotFoundException,
   Param,
   ParseUUIDPipe,
@@ -16,38 +11,16 @@ import {
   Query,
   UseFilters,
 } from '@nestjs/common';
+import { parsePage } from '../operations/input';
+import { OperationsErrorFilter, requireIdempotencyKey } from '../operations/operations-http';
 import { AccessClient } from './access-client';
-import { parseReport, parseRequestPage, parseReviewState } from './report';
+import { parseAllocation } from './allocation';
+import { parseReport, parseReviewState } from './report';
 import { RequestsRepository } from './requests.repository';
 import { parseReviewAction, parseReviewCommand, parseUrgency } from './review';
 
-const errorCodes: Record<number, string> = {
-  400: 'invalid_input',
-  401: 'unauthenticated',
-  403: 'forbidden',
-  404: 'not_found',
-  409: 'conflict',
-  503: 'service_unavailable',
-};
-
-@Catch(HttpException)
-class ReportingErrorFilter implements ExceptionFilter<HttpException> {
-  catch(error: HttpException, host: ArgumentsHost) {
-    const status = error.getStatus();
-    const response = host.switchToHttp().getResponse();
-    response.status(status).json({ code: errorCodes[status] ?? 'request_failed', message: error.message });
-  }
-}
-
-function requireIdempotencyKey(key?: string): string {
-  if (!key || !/^[!-+\x2D-~]{1,128}$/.test(key)) {
-    throw new BadRequestException('A single Idempotency-Key of 1–128 visible ASCII characters is required');
-  }
-  return key;
-}
-
 @Controller('v1/events/:eventId/requests')
-@UseFilters(ReportingErrorFilter)
+@UseFilters(OperationsErrorFilter)
 export class RequestsController {
   constructor(
     private readonly access: AccessClient,
@@ -96,7 +69,7 @@ export class RequestsController {
   ) {
     const reader = await this.access.requireRequestReader(eventId, authorization);
     return this.requests.listVisibleRequests(
-      eventId, reader, parseRequestPage(limit, cursor), parseReviewState(reviewState), parseUrgency(urgency),
+      eventId, reader, parsePage(limit, cursor), parseReviewState(reviewState), parseUrgency(urgency),
     );
   }
 
@@ -121,5 +94,29 @@ export class RequestsController {
       throw new NotFoundException('Request not found');
     }
     return request;
+  }
+}
+
+@Controller('v1/events/:eventId/assignments')
+@UseFilters(OperationsErrorFilter)
+export class AssignmentsController {
+  constructor(
+    private readonly access: AccessClient,
+    private readonly requests: RequestsRepository,
+  ) {}
+
+  @Post()
+  async create(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const userId = await this.access.requireCoordinator(eventId, authorization);
+    const operationKey = requireIdempotencyKey(key);
+    const input = parseAllocation(body);
+    const normalizedEvent = eventId.toLowerCase();
+    const eligibility = await this.access.volunteerEligibility(normalizedEvent, input.volunteerId);
+    return this.requests.allocate(normalizedEvent, userId, operationKey, input, eligibility);
   }
 }

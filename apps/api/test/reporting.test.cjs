@@ -58,7 +58,8 @@ async function listen(t, module) {
 
 test('Request reporting and review access through Access and Relief Operations', async (t) => {
   const operations = await isolatedDatabase(t, process.env.DATABASE_URL,
-    'operations/001-resident-requests.sql', 'operations/002-request-review.sql');
+    'operations/001-resident-requests.sql', 'operations/002-request-review.sql',
+    'operations/003-stock-lots.sql', 'operations/004-assignments.sql');
   const access = await isolatedDatabase(t, process.env.ACCESS_DATABASE_URL, 'access/001-resident-membership.sql');
   const event = randomUUID();
   const anotherEvent = randomUUID();
@@ -71,9 +72,13 @@ test('Request reporting and review access through Access and Relief Operations',
   const kid = 'r03-test';
   const jwk = { ...(await exportJWK(publicKey)), kid, alg: 'RS256' };
   const httpFetch = globalThis.fetch;
+  let volunteerLookupUnavailable = false;
   t.mock.method(globalThis, 'fetch', async (url, ...args) => {
     if (String(url) === new URL('.well-known/jwks.json', issuer).href) {
       return Response.json({ keys: [jwk] });
+    }
+    if (volunteerLookupUnavailable && String(url).includes('/volunteers/')) {
+      return new Response(null, { status: 503 });
     }
     return httpFetch(url, ...args);
   });
@@ -115,14 +120,14 @@ test('Request reporting and review access through Access and Relief Operations',
   const otherToken = await token('auth0|resident-b');
   const coordinatorToken = await token('auth0|coordinator');
 
-  function send(eventId, bearer, { key, body, requestId, action, query } = {}) {
+  function send(eventId, bearer, { key, body, requestId, action, query, resource = 'requests' } = {}) {
     const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
     if (body) {
       headers['content-type'] = 'application/json';
       if (key) headers['idempotency-key'] = key;
     }
     const path = [requestId, action].filter(Boolean).join('/');
-    const url = new URL(`/v1/events/${eventId}/requests${path ? '/' + path : ''}`, operationsApp.url);
+    const url = new URL(`/v1/events/${eventId}/${resource}${path ? '/' + path : ''}`, operationsApp.url);
     url.search = new URLSearchParams(query).toString();
     return httpFetch(url, {
       method: body ? 'POST' : 'GET',
@@ -363,6 +368,273 @@ test('Request reporting and review access through Access and Relief Operations',
     const failed = await operations.db.query('SELECT 1 FROM idempotency_record WHERE operation_key = $1',
       [questions[1 - success].key]);
     assert.equal(failed.rowCount, 0);
+  });
+
+  await t.test('coordinator stock entry persists one lot and audit entry on replay', async () => {
+    const input = {
+      category: validReport.category,
+      unit: validReport.unit,
+      receivedQuantity: 8,
+      location: validReport.location,
+    };
+    const stockKey = randomUUID();
+    const createLot = (bearer, body, operationKey = stockKey) =>
+      send(event, bearer, { key: operationKey, body, resource: 'stock-lots' });
+    const listLots = (eventId, bearer, query) => send(eventId, bearer, { query, resource: 'stock-lots' });
+    const failedKey = randomUUID();
+    assert.equal((await createLot(coordinatorToken, { ...input, unit: 'litres' }, failedKey)).status, 400);
+    assert.equal((await createLot(coordinatorToken, { ...input, receivedQuantity: 0 })).status, 400);
+    assert.equal((await createLot(coordinatorToken, { ...input, location: { ...input.location, latitude: 91 } })).status, 400);
+    assert.equal((await createLot(ownerToken, input)).status, 403);
+    assert.equal((await listLots(event, ownerToken)).status, 403);
+    assert.equal((await operations.db.query(
+      'SELECT 1 FROM idempotency_record WHERE operation_key = $1', [failedKey],
+    )).rowCount, 0);
+
+    const [created, replayed] = await Promise.all([
+      createLot(coordinatorToken, input), createLot(coordinatorToken, input),
+    ]);
+    assert.equal(created.status, 201, await created.clone().text());
+    assert.equal(replayed.status, 201, await replayed.clone().text());
+    const lot = await created.json();
+    assert.deepEqual(await replayed.json(), lot);
+    assert.equal(lot.receivedQuantity, 8);
+    assert.equal(lot.availableQuantity, 8);
+    assert.equal(lot.reservedQuantity, 0);
+    assert.equal(lot.deliveredQuantity, 0);
+    assert.equal(lot.version, 1);
+    assert.equal(lot.location, undefined);
+    assert.equal((await createLot(coordinatorToken, { ...input, receivedQuantity: 9 })).status, 409);
+    assert.equal((await operations.db.query('SELECT 1 FROM stock_lot')).rowCount, 1);
+    assert.deepEqual((await operations.db.query(
+      'SELECT actor_id, stock_lot_id, operation FROM audit_entry WHERE stock_lot_id IS NOT NULL',
+    )).rows, [{ actor_id: coordinator, stock_lot_id: lot.id, operation: 'stock_lot.create' }]);
+    await assert.rejects(operations.db.query('UPDATE stock_lot SET reserved_quantity = 9 WHERE id = $1', [lot.id]),
+      { code: '23514' });
+
+    const detail = (eventId, bearer) => send(eventId, bearer, { requestId: lot.id, resource: 'stock-lots' });
+    assert.deepEqual(await (await detail(event, coordinatorToken)).json(), { ...lot, location: input.location });
+    assert.equal((await detail(anotherEvent, coordinatorToken)).status, 404);
+    assert.deepEqual(await (await listLots(anotherEvent, coordinatorToken)).json(), { stockLots: [], nextCursor: null });
+    const second = await createLot(coordinatorToken, input, failedKey);
+    assert.equal(second.status, 201, await second.clone().text());
+    const secondLot = await second.json();
+    const page = await (await listLots(event, coordinatorToken, { category: input.category, limit: '1' })).json();
+    assert.equal(page.stockLots.length, 1);
+    assert.ok(page.nextCursor);
+    const next = await (await listLots(event, coordinatorToken, {
+      category: input.category, limit: '1', cursor: page.nextCursor,
+    })).json();
+    assert.equal(next.nextCursor, null);
+    assert.equal(next.stockLots.length, 1);
+    assert.deepEqual(new Set([page.stockLots[0].id, next.stockLots[0].id]), new Set([lot.id, secondLot.id]));
+    assert.deepEqual(await (await listLots(event, coordinatorToken, { category: 'blankets' })).json(),
+      { stockLots: [], nextCursor: null });
+  });
+
+  await t.test('assignment reservation checks eligibility and commits stock, request, audit and replay together', async (t) => {
+    const volunteer = randomUUID();
+    const foreignVolunteer = randomUUID();
+    const otherCoordinator = randomUUID();
+    await access.db.query(
+      `INSERT INTO app_user (id, oidc_issuer, oidc_subject)
+       VALUES ($1, $4, 'auth0|volunteer'), ($2, $4, 'auth0|foreign-volunteer'), ($3, $4, 'auth0|second-coordinator')`,
+      [volunteer, foreignVolunteer, otherCoordinator, issuer],
+    );
+    await access.db.query(
+      `INSERT INTO event_member (event_id, user_id, role)
+       VALUES ($1, $3, 'volunteer'), ($2, $4, 'volunteer'), ($1, $5, 'coordinator')`,
+      [event, anotherEvent, volunteer, foreignVolunteer, otherCoordinator],
+    );
+    await operations.db.query("INSERT INTO category (code, unit) VALUES ('blankets', 'bundles')");
+    const secondCoordinatorToken = await token('auth0|second-coordinator');
+
+    async function newRequest(verify = true) {
+      const created = await send(event, ownerToken, { body: validReport, key: randomUUID() });
+      assert.equal(created.status, 201, await created.clone().text());
+      const request = await created.json();
+      if (!verify) return request;
+      const verified = await send(event, coordinatorToken, {
+        requestId: request.id, action: 'verification', key: randomUUID(),
+        body: { version: request.version, confirmedQuantity: 8, urgency: 'routine',
+          source: { type: 'field_lead', reference: 'synthetic-allocation' }, rationale: 'Confirmed eight cases' },
+      });
+      assert.equal(verified.status, 200, await verified.clone().text());
+      return verified.json();
+    }
+
+    async function newLot(eventId = event, category = validReport.category, unit = validReport.unit) {
+      const created = await send(eventId, coordinatorToken, {
+        resource: 'stock-lots', key: randomUUID(),
+        body: { category, unit, receivedQuantity: 8, location: validReport.location },
+      });
+      assert.equal(created.status, 201, await created.clone().text());
+      return created.json();
+    }
+
+    function assign(request, lot, options = {}) {
+      return send(event, options.bearer ?? coordinatorToken, {
+        resource: 'assignments', key: options.key ?? randomUUID(),
+        body: { requestId: request.id, requestVersion: request.version, lotId: lot.id,
+          volunteerId: volunteer, quantity: 5, instructions: 'Meet the site coordinator', ...options.body },
+      });
+    }
+
+    async function balance(lot) {
+      const result = await operations.db.query(
+        `SELECT reserved_quantity AS reserved, received_quantity - reserved_quantity - delivered_quantity AS available,
+                version FROM stock_lot WHERE id = $1`, [lot.id],
+      );
+      return result.rows[0];
+    }
+
+    await t.test('rejects invalid roles, event scope and request or lot eligibility', async () => {
+      const request = await newRequest();
+      const lot = await newLot();
+      assert.equal((await assign(request, lot, { bearer: ownerToken })).status, 403);
+      assert.equal((await assign(request, lot, { body: { quantity: 0 } })).status, 400);
+      for (const candidate of [owner, foreignVolunteer, randomUUID()]) {
+        const rejected = await assign(request, lot, { body: { volunteerId: candidate } });
+        assert.equal(rejected.status, 400);
+        assert.equal((await rejected.json()).code, 'INVALID_VOLUNTEER');
+      }
+      const unverified = await assign(await newRequest(false), lot);
+      assert.equal(unverified.status, 409);
+      assert.equal((await unverified.json()).code, 'REQUEST_NOT_VERIFIED');
+      const incompatible = await assign(request, await newLot(event, 'blankets', 'bundles'));
+      assert.equal(incompatible.status, 409);
+      assert.equal((await incompatible.json()).code, 'INCOMPATIBLE_STOCK');
+      assert.equal((await assign(request, await newLot(anotherEvent))).status, 404);
+      assert.deepEqual(await balance(lot), { reserved: 0, available: 8, version: 1 });
+    });
+
+    await t.test('two coordinators competing for the last stock commit one assignment', async () => {
+      const lot = await newLot();
+      const requests = [await newRequest(), await newRequest()];
+      const attempts = [
+        { key: randomUUID(), bearer: coordinatorToken }, { key: randomUUID(), bearer: secondCoordinatorToken },
+      ];
+      const responses = await Promise.all(requests.map((request, index) => assign(request, lot, attempts[index])));
+      assert.deepEqual(responses.map(({ status }) => status).sort(), [201, 409]);
+      const winner = responses.findIndex(({ status }) => status === 201);
+      const loser = 1 - winner;
+      const assignment = await responses[winner].json();
+      const conflict = await responses[loser].json();
+      assert.equal(conflict.code, 'INSUFFICIENT_STOCK');
+      assert.deepEqual(conflict.details, { availableQuantity: 3 });
+      assert.equal(assignment.state, 'assigned');
+      assert.equal(assignment.allocatableQuantity, 3);
+      assert.equal(assignment.requestVersion, requests[winner].version + 1);
+      assert.equal(assignment.lotVersion, 2);
+      assert.equal(assignment.instructions, undefined);
+      assert.deepEqual(await balance(lot), { reserved: 5, available: 3, version: 2 });
+      assert.deepEqual((await operations.db.query(
+        'SELECT id, instructions FROM assignment WHERE stock_lot_id = $1', [lot.id],
+      )).rows, [{ id: assignment.id, instructions: 'Meet the site coordinator' }]);
+      assert.deepEqual((await operations.db.query(
+        'SELECT assignment_id, request_id FROM audit_entry WHERE stock_lot_id = $1 AND assignment_id IS NOT NULL', [lot.id],
+      )).rows, [{ assignment_id: assignment.id, request_id: requests[winner].id }]);
+      assert.equal((await operations.db.query('SELECT 1 FROM idempotency_record WHERE operation_key = $1',
+        [attempts[loser].key])).rowCount, 0);
+
+      const changed = await assign(requests[winner], lot, { ...attempts[winner], body: { quantity: 4 } });
+      assert.equal(changed.status, 409);
+      await access.db.query("UPDATE event_member SET role = 'resident' WHERE event_id = $1 AND user_id = $2", [event, volunteer]);
+      try {
+        const replay = await assign(requests[winner], lot, attempts[winner]);
+        assert.equal(replay.status, 201);
+        assert.deepEqual(await replay.json(), assignment);
+        volunteerLookupUnavailable = true;
+        assert.equal((await assign(requests[loser], lot)).status, 503);
+        const outageReplay = await assign(requests[winner], lot, attempts[winner]);
+        assert.equal(outageReplay.status, 201);
+        assert.deepEqual(await outageReplay.json(), assignment);
+      } finally {
+        volunteerLookupUnavailable = false;
+        await access.db.query("UPDATE event_member SET role = 'volunteer' WHERE event_id = $1 AND user_id = $2", [event, volunteer]);
+      }
+      const winnerId = winner === 0 ? coordinator : otherCoordinator;
+      await access.db.query("UPDATE event_member SET role = 'resident' WHERE event_id = $1 AND user_id = $2", [event, winnerId]);
+      try {
+        assert.equal((await assign(requests[winner], lot, attempts[winner])).status, 403);
+      } finally {
+        await access.db.query("UPDATE event_member SET role = 'coordinator' WHERE event_id = $1 AND user_id = $2", [event, winnerId]);
+      }
+    });
+
+    await t.test('two lots serving one request cannot reserve more than the confirmed need', async () => {
+      const request = await newRequest();
+      const lots = [await newLot(), await newLot()];
+      const responses = await Promise.all([
+        assign(request, lots[0]), assign(request, lots[1], { bearer: secondCoordinatorToken }),
+      ]);
+      assert.deepEqual(responses.map(({ status }) => status).sort(), [201, 409]);
+      const winner = responses.findIndex(({ status }) => status === 201);
+      const stale = await responses[1 - winner].json();
+      assert.equal(stale.code, 'STALE_VERSION');
+      assert.equal(stale.details.version, request.version + 1);
+      const losingLot = lots[1 - winner];
+      const retry = await assign({ ...request, version: stale.details.version }, losingLot);
+      assert.equal(retry.status, 409);
+      assert.deepEqual(await retry.json(), {
+        code: 'INSUFFICIENT_NEED', message: 'The request has less allocatable need than this assignment',
+        details: { allocatableQuantity: 3 },
+      });
+      assert.deepEqual(await balance(losingLot), { reserved: 0, available: 8, version: 1 });
+    });
+
+    await t.test('audit failure rolls back reservation, request version, assignment and operation key', async () => {
+      const request = await newRequest();
+      const lot = await newLot();
+      const key = randomUUID();
+      await operations.db.query(`
+        CREATE FUNCTION reject_assignment_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'test audit failure';
+        END; $$;
+        CREATE TRIGGER reject_assignment_audit BEFORE INSERT ON audit_entry FOR EACH ROW
+          WHEN (NEW.operation = 'assignment.create') EXECUTE FUNCTION reject_assignment_audit();
+      `);
+      try {
+        assert.equal((await assign(request, lot, { key })).status, 500);
+        assert.deepEqual(await balance(lot), { reserved: 0, available: 8, version: 1 });
+        assert.equal((await operations.db.query('SELECT version FROM assistance_request WHERE id = $1',
+          [request.id])).rows[0].version, request.version);
+        assert.equal((await operations.db.query('SELECT 1 FROM assignment WHERE stock_lot_id = $1', [lot.id])).rowCount, 0);
+        assert.equal((await operations.db.query('SELECT 1 FROM idempotency_record WHERE operation_key = $1', [key])).rowCount, 0);
+      } finally {
+        await operations.db.query('DROP TRIGGER reject_assignment_audit ON audit_entry; DROP FUNCTION reject_assignment_audit()');
+      }
+      assert.equal((await assign(request, lot, { key })).status, 201);
+    });
+
+    await t.test('a retryable database failure starts a fresh reservation with the same key', async () => {
+      const request = await newRequest();
+      const lot = await newLot();
+      const key = randomUUID();
+      await operations.db.query(`
+        CREATE SEQUENCE reservation_attempts;
+        CREATE FUNCTION retry_assignment_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF nextval('reservation_attempts') = 1 THEN
+            RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'test serialization failure';
+          END IF;
+          RETURN NEW;
+        END; $$;
+        CREATE TRIGGER retry_assignment_audit BEFORE INSERT ON audit_entry FOR EACH ROW
+          WHEN (NEW.operation = 'assignment.create') EXECUTE FUNCTION retry_assignment_audit();
+      `);
+      try {
+        const response = await assign(request, lot, { key });
+        assert.equal(response.status, 201, await response.clone().text());
+        assert.equal((await operations.db.query('SELECT last_value FROM reservation_attempts')).rows[0].last_value, '2');
+        assert.deepEqual(await balance(lot), { reserved: 5, available: 3, version: 2 });
+        assert.equal((await operations.db.query('SELECT 1 FROM assignment WHERE stock_lot_id = $1', [lot.id])).rowCount, 1);
+      } finally {
+        await operations.db.query(`DROP TRIGGER retry_assignment_audit ON audit_entry;
+          DROP FUNCTION retry_assignment_audit(); DROP SEQUENCE reservation_attempts`);
+      }
+    });
   });
 
   await t.test('verification and duplicate rejection persist while protected notes stay coordinator-only', async () => {

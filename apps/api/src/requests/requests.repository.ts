@@ -1,16 +1,16 @@
-import { createHash } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
-  OnModuleDestroy,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Pool, type PoolClient } from 'pg';
-import { RequestReader } from './access-client';
-import { ReportInput, RequestDetail, RequestPageOptions, RequestSummary, ReviewState } from './report';
+import type { PoolClient } from 'pg';
+import type { PageOptions } from '../operations/input';
+import { OperationsDatabase } from '../operations/operations.database';
+import type { RequestReader, VolunteerEligibility } from './access-client';
+import type { AllocationInput } from './allocation';
+import { ReportInput, RequestDetail, RequestSummary, ReviewState } from './report';
 import { nextReviewState, type ReviewCommand, type Urgency } from './review';
 
 type RequestSummaryRow = Omit<RequestSummary, 'createdAt' | 'verifiedQuantity' | 'verifiedUrgency'> & {
@@ -33,30 +33,12 @@ function summarize({ createdAt, verifiedQuantity, verifiedUrgency, ...fields }: 
 }
 
 @Injectable()
-export class RequestsRepository implements OnModuleDestroy {
-  private readonly connection = process.env.DATABASE_URL
-    ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 2000 })
-    : undefined;
-
-  constructor() {
-    const logger = new Logger(RequestsRepository.name);
-    this.connection?.on('error', (error) => logger.error(error.message));
-  }
-
-  private get pool(): Pool {
-    if (!this.connection) {
-      throw new ServiceUnavailableException('Operations database is unavailable');
-    }
-    return this.connection;
-  }
-
-  async onModuleDestroy() {
-    await this.connection?.end();
-  }
+export class RequestsRepository {
+  constructor(private readonly database: OperationsDatabase) {}
 
   async create(eventId: string, userId: string, key: string, input: ReportInput): Promise<RequestSummary> {
-    return this.mutate(userId, key, `/v1/events/${eventId}/requests`, input, 201, async (client) => {
-      await this.lockActiveEvent(client, eventId);
+    return this.database.mutate(userId, key, `/v1/events/${eventId}/requests`, input, 201, async (client) => {
+      await this.database.lockActiveEvent(client, eventId);
       const category = await client.query(
         'SELECT code FROM category WHERE code = $1 AND unit = $2 FOR SHARE',
         [input.category, input.unit],
@@ -98,8 +80,8 @@ export class RequestsRepository implements OnModuleDestroy {
       if (owned.rowCount === 0) throw new NotFoundException('Request not found');
     } : undefined;
 
-    return this.mutate(userId, key, path, command, 200, async (client) => {
-      await this.lockActiveEvent(client, eventId);
+    return this.database.mutate(userId, key, path, command, 200, async (client) => {
+      await this.database.lockActiveEvent(client, eventId);
       const locked = await client.query<Pick<RequestSummary, 'version' | 'reviewState'>>(
         `SELECT version, review_state AS "reviewState"
            FROM assistance_request
@@ -154,56 +136,126 @@ export class RequestsRepository implements OnModuleDestroy {
     }, checkReplay);
   }
 
-  private async lockActiveEvent(client: PoolClient, eventId: string) {
-    const event = await client.query('SELECT id FROM relief_event WHERE id = $1 AND active FOR SHARE', [eventId]);
-    if (event.rowCount === 0) throw new NotFoundException('Active event not found');
+  async allocate(eventId: string, userId: string, key: string, input: AllocationInput, eligibility: VolunteerEligibility) {
+    return this.database.mutate(userId, key, `/v1/events/${eventId}/assignments`, input, 201, async (client) => {
+      await this.database.lockActiveEvent(client, eventId);
+      if (eligibility === 'unavailable') {
+        throw new ServiceUnavailableException('Access could not establish volunteer eligibility');
+      }
+      if (eligibility === 'ineligible') {
+        throw new BadRequestException({
+          code: 'INVALID_VOLUNTEER', message: 'The selected user must be a volunteer in this event',
+        });
+      }
+
+      const { requestId, requestVersion, lotId, volunteerId, quantity, instructions } = input;
+      const request = await this.lockRequestForAllocation(client, eventId, requestId, requestVersion);
+      // Use a new statement so Read Committed includes assignments committed while waiting on the request lock.
+      const totals = await client.query<{ delivered: string; held: string }>(
+        `SELECT COALESCE(SUM(delivered_quantity), 0) AS delivered,
+                COALESCE(SUM(assigned_quantity - delivered_quantity) FILTER (
+                  WHERE state IN ('assigned', 'accepted', 'in_transit')
+                ), 0) AS held
+           FROM assignment WHERE event_id = $1 AND request_id = $2`,
+        [eventId, requestId],
+      );
+      const { delivered, held } = totals.rows[0];
+      const allocatableQuantity = Math.max(0, request.verifiedQuantity - Number(delivered) - Number(held));
+
+      const stock = await client.query<{ categoryCode: string; availableQuantity: number }>(
+        `SELECT category_code AS "categoryCode",
+                received_quantity - reserved_quantity - delivered_quantity AS "availableQuantity"
+           FROM stock_lot WHERE event_id = $1 AND id = $2 FOR UPDATE`,
+        [eventId, lotId],
+      );
+      const lot = stock.rows[0];
+      if (!lot) throw new NotFoundException('Stock lot not found');
+      // A category has one unit, enforced by the stock lot's category/unit foreign key.
+      if (lot.categoryCode !== request.categoryCode) {
+        throw new ConflictException({ code: 'INCOMPATIBLE_STOCK', message: 'Stock must match the request category and unit' });
+      }
+      if (quantity > allocatableQuantity) {
+        throw new ConflictException({
+          code: 'INSUFFICIENT_NEED', message: 'The request has less allocatable need than this assignment',
+          details: { allocatableQuantity },
+        });
+      }
+      if (quantity > lot.availableQuantity) {
+        throw new ConflictException({
+          code: 'INSUFFICIENT_STOCK', message: 'The lot has less available stock than this assignment',
+          details: { availableQuantity: lot.availableQuantity },
+        });
+      }
+
+      const updatedLot = await client.query<{ version: number; reservedQuantity: number }>(
+        `UPDATE stock_lot SET reserved_quantity = reserved_quantity + $3, version = version + 1
+          WHERE event_id = $1 AND id = $2 RETURNING version, reserved_quantity AS "reservedQuantity"`,
+        [eventId, lotId, quantity],
+      );
+      const inserted = await client.query<{ id: string; version: number; state: 'assigned'; createdAt: Date }>(
+        `INSERT INTO assignment (event_id, request_id, stock_lot_id, volunteer_id, assigned_quantity, instructions)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, version, state, created_at AS "createdAt"`,
+        [eventId, requestId, lotId, volunteerId, quantity, instructions],
+      );
+      const { id, version, state, createdAt } = inserted.rows[0];
+      await client.query(
+        `UPDATE assistance_request SET version = version + 1, updated_at = clock_timestamp()
+          WHERE event_id = $1 AND id = $2`,
+        [eventId, requestId],
+      );
+      await client.query(
+        `INSERT INTO audit_entry (event_id, actor_id, request_id, stock_lot_id, assignment_id, operation, review_state)
+         VALUES ($1, $2, $3, $4, $5, 'assignment.create', 'verified')`,
+        [eventId, userId, requestId, lotId, id],
+      );
+      return {
+        id, version, state, requestId, lotId, volunteerId,
+        quantity, deliveredQuantity: 0, createdAt: createdAt.toISOString(),
+        requestVersion: request.version + 1,
+        lotVersion: updatedLot.rows[0].version,
+        reservedQuantity: updatedLot.rows[0].reservedQuantity,
+        availableQuantity: lot.availableQuantity - quantity,
+        allocatableQuantity: allocatableQuantity - quantity,
+      };
+    });
   }
 
-  private async mutate(
-    userId: string, key: string, path: string, input: ReportInput | ReviewCommand, status: 200 | 201,
-    write: (client: PoolClient) => Promise<RequestSummary>,
-    checkReplay?: (client: PoolClient) => Promise<void>,
-  ): Promise<RequestSummary> {
-    const fingerprint = createHash('sha256').update(JSON.stringify(['POST', path, input])).digest('hex');
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
-      const claim = await client.query(
-        `INSERT INTO idempotency_record (actor_id, operation_key, fingerprint)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (actor_id, operation_key) DO NOTHING`,
-        [userId, key, fingerprint],
-      );
-      if (claim.rowCount === 0) {
-        await checkReplay?.(client);
-        const result = await client.query<{ fingerprint: string; response_body: RequestSummary }>(
-          `SELECT fingerprint, response_body
-             FROM idempotency_record
-            WHERE actor_id = $1 AND operation_key = $2`,
-          [userId, key],
-        );
-        const saved = result.rows[0];
-        if (saved.fingerprint !== fingerprint) {
-          throw new ConflictException('This idempotency key was used for another operation');
-        }
-        await client.query('COMMIT');
-        return saved.response_body;
-      }
-      const response = await write(client);
-      await client.query(
-        `UPDATE idempotency_record
-            SET response_status = $3, response_body = $4
-          WHERE actor_id = $1 AND operation_key = $2`,
-        [userId, key, status, response],
-      );
-      await client.query('COMMIT');
-      return response;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+  private async lockRequestForAllocation(
+    client: PoolClient,
+    eventId: string,
+    requestId: string,
+    expectedVersion: number,
+  ) {
+    const result = await client.query<{
+      version: number;
+      reviewState: ReviewState;
+      verifiedQuantity: number | null;
+      categoryCode: string;
+    }>(
+      `SELECT version, review_state AS "reviewState",
+              verified_quantity AS "verifiedQuantity", category_code AS "categoryCode"
+         FROM assistance_request
+        WHERE event_id = $1 AND id = $2
+        FOR UPDATE`,
+      [eventId, requestId],
+    );
+
+    const current = result.rows[0];
+    if (!current) {
+      throw new NotFoundException('Request not found');
     }
+
+    if (current.version !== expectedVersion) {
+      throw new ConflictException({
+        code: 'STALE_VERSION', message: 'The request version has changed', details: { version: current.version },
+      });
+    }
+
+    if (current.reviewState !== 'verified' || current.verifiedQuantity === null) {
+      throw new ConflictException({ code: 'REQUEST_NOT_VERIFIED', message: 'Only verified requests can receive allocations' });
+    }
+
+    return { ...current, verifiedQuantity: current.verifiedQuantity };
   }
 
   async findVisibleRequest(
@@ -211,7 +263,7 @@ export class RequestsRepository implements OnModuleDestroy {
     requestId: string,
     reader: RequestReader,
   ): Promise<RequestDetail | null> {
-    const result = await this.pool.query<RequestDetailRow>(
+    const result = await this.database.pool.query<RequestDetailRow>(
       `SELECT r.id, r.version, r.description, c.code AS category, c.unit,
               r.requested_quantity AS quantity, r.review_state AS "reviewState",
               r.created_at AS "createdAt",
@@ -255,11 +307,11 @@ export class RequestsRepository implements OnModuleDestroy {
   async listVisibleRequests(
     eventId: string,
     reader: RequestReader,
-    { limit, before }: RequestPageOptions,
+    { limit, before }: PageOptions,
     reviewState?: ReviewState,
     urgency?: Urgency,
   ) {
-    const result = await this.pool.query<RequestSummaryRow & { cursorCreatedAt: string }>(
+    const result = await this.database.pool.query<RequestSummaryRow & { cursorCreatedAt: string }>(
       `SELECT r.id, r.version, c.code AS category, c.unit,
               r.requested_quantity AS quantity, r.review_state AS "reviewState",
               r.created_at AS "createdAt",

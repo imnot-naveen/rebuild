@@ -13,8 +13,8 @@ import {
 import { AccessTokenVerifier } from '../access-token';
 import { AccessDatabase } from './access.database';
 
-@Controller('internal/events/:eventId/actor')
-class ActorController {
+@Controller('internal/events/:eventId')
+class EventAccessController {
   private readonly sharedKey = process.env.ACCESS_INTERNAL_KEY?.trim();
 
   constructor(
@@ -22,12 +22,7 @@ class ActorController {
     private readonly database: AccessDatabase,
   ) {}
 
-  @Get()
-  async resolve(
-    @Param('eventId', ParseUUIDPipe) eventId: string,
-    @Headers('x-access-key') key: string | undefined,
-    @Headers('authorization') authorization: string | undefined,
-  ) {
+  private requireInternalKey(key: string | undefined) {
     if (!this.sharedKey) {
       throw new ServiceUnavailableException('Access is unavailable');
     }
@@ -35,7 +30,15 @@ class ActorController {
         !timingSafeEqual(Buffer.from(key), Buffer.from(this.sharedKey))) {
       throw new NotFoundException();
     }
+  }
 
+  @Get('actor')
+  async resolve(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Headers('x-access-key') key: string | undefined,
+    @Headers('authorization') authorization: string | undefined,
+  ) {
+    this.requireInternalKey(key);
     const { issuer, subject } = await this.tokens.verifyAuthorization(authorization);
     const result = await this.database.pool.query<{ userId: string; role: string }>(
       `SELECT u.id AS "userId", m.role
@@ -50,7 +53,21 @@ class ActorController {
     }
     return actor;
   }
+
+  @Get('volunteers/:volunteerId')
+  async volunteerEligibility(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('volunteerId', ParseUUIDPipe) volunteerId: string,
+    @Headers('x-access-key') key: string | undefined,
+  ) {
+    this.requireInternalKey(key);
+    const membership = await this.database.pool.query(
+      `SELECT 1 FROM event_member WHERE event_id = $1 AND user_id = $2 AND role = 'volunteer'`,
+      [eventId, volunteerId],
+    );
+    return { eligible: membership.rowCount === 1 };
+  }
 }
 
-@Module({ controllers: [ActorController], providers: [AccessTokenVerifier, AccessDatabase] })
+@Module({ controllers: [EventAccessController], providers: [AccessTokenVerifier, AccessDatabase] })
 export class AccessModule {}

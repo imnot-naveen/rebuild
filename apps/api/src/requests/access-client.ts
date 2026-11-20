@@ -12,6 +12,8 @@ export interface RequestReader {
   role: 'resident' | 'coordinator';
 }
 
+export type VolunteerEligibility = 'eligible' | 'ineligible' | 'unavailable';
+
 @Injectable()
 export class AccessClient {
   private readonly baseUrl = process.env.ACCESS_URL?.trim();
@@ -45,6 +47,19 @@ export class AccessClient {
     return { userId: actor.userId, role: actor.role };
   }
 
+  async volunteerEligibility(eventId: string, volunteerId: string): Promise<VolunteerEligibility> {
+    const response = await this.fetchInternal(`/internal/events/${eventId}/volunteers/${volunteerId}`).catch(() => null);
+    if (!response?.ok) {
+      await response?.body?.cancel().catch(() => undefined);
+      return 'unavailable';
+    }
+    const body: unknown = await response.json().catch(() => null);
+    if (!body || typeof body !== 'object' || !('eligible' in body) || typeof body.eligible !== 'boolean') {
+      return 'unavailable';
+    }
+    return body.eligible ? 'eligible' : 'ineligible';
+  }
+
   private async resolveActor(
     eventId: string,
     forbiddenMessage: string,
@@ -53,17 +68,7 @@ export class AccessClient {
     if (!authorization) {
       throw new UnauthorizedException('A bearer access token is required');
     }
-    if (!this.baseUrl || !this.key) {
-      throw new ServiceUnavailableException('Access is unavailable');
-    }
-
-    const response = await fetch(new URL(`/internal/events/${eventId}/actor`, this.baseUrl), {
-      headers: { authorization, 'x-access-key': this.key },
-      redirect: 'error',
-      signal: AbortSignal.timeout(3000),
-    }).catch(() => {
-      throw new ServiceUnavailableException('Access is unavailable');
-    });
+    const response = await this.fetchInternal(`/internal/events/${eventId}/actor`, { authorization });
     if (response.status === 401) {
       await response.body?.cancel();
       throw new UnauthorizedException('Authentication failed');
@@ -87,5 +92,20 @@ export class AccessClient {
       throw new ServiceUnavailableException('Access returned an invalid actor');
     }
     return { userId: actor.userId, role: actor.role };
+  }
+
+  private async fetchInternal(path: string, headers?: Record<string, string>): Promise<Response> {
+    if (!this.baseUrl || !this.key) {
+      throw new ServiceUnavailableException('Access is unavailable');
+    }
+    try {
+      return await fetch(new URL(path, this.baseUrl), {
+        headers: { ...headers, 'x-access-key': this.key },
+        redirect: 'error',
+        signal: AbortSignal.timeout(3000),
+      });
+    } catch {
+      throw new ServiceUnavailableException('Access is unavailable');
+    }
   }
 }
