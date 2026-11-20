@@ -34,13 +34,26 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Naveen's first reservation code exercise is to lock the request by event and request ID on the transaction client, then check that it is verified and that the supplied version is current. Review that query before adding the separate allocation totals query and the lot lock. Hosted preview provisioning and the remaining estimate are open from M1.
+Finish R05 with stock adjustments and the coordinator inventory and assignment panels. Show a reservation and a stock conflict through the browser, then continue to R06 matching.
+
+## R05 reservation checkpoint · 20 November 2026
+
+- At Naveen's request, the assistant finished the reservation API around his request-locking helper. Operations checks the coordinator and proposed volunteer through Access, then locks the request, reads assignment totals in a separate statement and locks the lot. Stock, request and assignment versions, audit and the replay response commit together. The API replays an authorized operation even if the proposed volunteer's role changes later.
+- Both workspace builds passed. All 22 API checks passed against disposable PostgreSQL 17.6 and PostGIS 3.7.0, including the committed rollback test. Migrations succeeded twice. Two coordinators reserving 5 cases each from the same lot of 8 committed one assignment and left 3 cases. The shared-request race returned a stale version and a retry showed 3 allocatable cases. An injected audit failure rolled back every write, and a serialization failure retried with the same key.
+- The backend reservation examples are demonstrated. R05 remains in progress for stock adjustments and the coordinator browser workflow.
+
+## M1 review · 20 November 2026
+
+- The resident report, coordinator verification and resident status workflow passed locally using synthetic identities with the real Access and Operations services. The hosted Auth0 tenant walkthrough and deployment remain open. Access already returns a retryable failure when it cannot establish permissions.
+- Keep Cloudflare Pages and Neon/PostGIS as the free preview candidates. Render Free web services cannot receive private network traffic. For M4, test a single public preview container with Access and Matching bound to loopback and separate database credentials. This preview would share one deployment and rollback while preserving the service boundaries. Check combined memory, a cold start, the deployed sign-in workflow and private routing before publishing the demo. No cloud resources were provisioned for this review. [Cloudflare limits](https://developers.cloudflare.com/pages/platform/limits/) · [Neon plans](https://neon.com/docs/introduction/plans) · [Neon PostGIS](https://neon.com/docs/extensions/postgis) · [Render Free limits](https://render.com/docs/free)
+- The remaining base estimate is 64 focused hours. Allocate 8 to M2, 10 to M3, 12 to M4, 8 to M5, 10 to M6 and 16 to M7. Move two hours from M2 to the M4 preview spike because the reservation API is already demonstrated and packaging multiple processes adds work. The December and January targets are unchanged. Actual focused hours were unmeasured, and the January allocation still depends on the research schedule.
 
 ## R05 inventory kickoff · 20 November 2026
 
 - Started from `origin/main` at `8fc831a` after [PR #11](https://github.com/imnot-naveen/rebuild/pull/11) merged. The assistant added coordinator-only stock entry, paginated inventory reads and detail with exact location. Stock creation persists the lot, audit entry and idempotency response together. Database constraints enforce the category-unit pair and keep reserved plus delivered within the received quantity.
 - Both workspace builds passed. The migrations succeeded twice against disposable PostgreSQL 17.6 and PostGIS 3.7.0. All 16 API checks passed, using the committed rollback test because the local exercise copy has a SQL typo. The stock integration case covers concurrent replay, changed payloads, rollback of an invalid stock entry, event and role scope, pagination and rejection of an over-capacity balance.
 - Naveen identified that the second attempt in the shared-lot example must roll back when insufficient stock remains. The assistant reviewed the request-first, lot-second lock order and the availability check after waiting. With 8 cases and two attempts for 5, exactly one assignment can commit and 3 cases remain available.
+- Naveen added the request-locking helper in `RequestsRepository` using the assistant's example. The assistant corrected the class method declaration and exception import. The API build passed, and direct checks with a stub transaction client covered the verified, missing, stale and unverified cases.
 - The assignment transaction, stock adjustments and the inventory browser panel are open. R05 acceptance still requires volunteer eligibility, reservation rollback, and contention across both a shared lot and a shared request.
 
 ## R04 review workflow closeout · 19 November 2026

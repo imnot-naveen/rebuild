@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { requiredText } from '../operations/input';
+import { parsePositiveQuantity, parseUuid, requiredText } from '../operations/input';
 import type { ReviewState } from './report';
 
 export type Urgency = 'routine' | 'urgent' | 'critical';
@@ -64,18 +64,8 @@ export function parseReviewAction(route: string): ReviewCommand['action'] {
   return action;
 }
 
-function positiveInteger(value: unknown, name: string): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 2_147_483_647) {
-    throw new BadRequestException(`${name} must be a positive whole number in the database range`);
-  }
-  return value;
-}
-
 function requestId(value: unknown): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new BadRequestException('A valid linked request ID is required');
-  }
-  return value.toLowerCase();
+  return parseUuid(value, 'A valid linked request ID is required');
 }
 
 export function parseReviewCommand(action: ReviewCommand['action'], body: unknown): ReviewCommand {
@@ -83,7 +73,7 @@ export function parseReviewCommand(action: ReviewCommand['action'], body: unknow
     throw new BadRequestException('Expected a review action object');
   }
   const fields = body as Record<string, unknown>;
-  const version = positiveInteger(fields.version, 'Version');
+  const version = parsePositiveQuantity(fields.version, 'Version');
   switch (action) {
     case 'clarify':
       return { action, version, message: requiredText(fields.question, 'Question', 2000) };
@@ -97,7 +87,7 @@ export function parseReviewCommand(action: ReviewCommand['action'], body: unknow
     case 'link':
       return { action, version, relatedId: requestId(fields.relatedRequestId) };
     case 'verify': {
-      const quantity = positiveInteger(fields.confirmedQuantity, 'Confirmed quantity');
+      const quantity = parsePositiveQuantity(fields.confirmedQuantity, 'Confirmed quantity');
       const urgency = parseUrgency(fields.urgency);
       if (!urgency) throw new BadRequestException('Verified urgency is required');
       const source = fields.source;

@@ -20,6 +20,11 @@ export class OperationsErrorFilter implements ExceptionFilter<HttpException> {
   catch(error: HttpException, host: ArgumentsHost) {
     const status = error.getStatus();
     const response = host.switchToHttp().getResponse();
+    const payload = error.getResponse();
+    if (typeof payload === 'object' && 'code' in payload && typeof payload.code === 'string') {
+      response.status(status).json(payload);
+      return;
+    }
     response.status(status).json({ code: errorCodes[status] ?? 'request_failed', message: error.message });
   }
 }

@@ -53,6 +53,13 @@ export function parsePositiveQuantity(value: unknown, name = 'Quantity'): number
   return value;
 }
 
+export function parseUuid(value: unknown, message: string): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new BadRequestException(message);
+  }
+  return value.toLowerCase();
+}
+
 export function parseLocation(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new BadRequestException('Location is required');

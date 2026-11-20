@@ -1,12 +1,15 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import type { PageOptions } from '../operations/input';
 import { OperationsDatabase } from '../operations/operations.database';
-import { RequestReader } from './access-client';
+import type { RequestReader, VolunteerEligibility } from './access-client';
+import type { AllocationInput } from './allocation';
 import { ReportInput, RequestDetail, RequestSummary, ReviewState } from './report';
 import { nextReviewState, type ReviewCommand, type Urgency } from './review';
 
@@ -131,6 +134,128 @@ export class RequestsRepository {
       );
       return response;
     }, checkReplay);
+  }
+
+  async allocate(eventId: string, userId: string, key: string, input: AllocationInput, eligibility: VolunteerEligibility) {
+    return this.database.mutate(userId, key, `/v1/events/${eventId}/assignments`, input, 201, async (client) => {
+      await this.database.lockActiveEvent(client, eventId);
+      if (eligibility === 'unavailable') {
+        throw new ServiceUnavailableException('Access could not establish volunteer eligibility');
+      }
+      if (eligibility === 'ineligible') {
+        throw new BadRequestException({
+          code: 'INVALID_VOLUNTEER', message: 'The selected user must be a volunteer in this event',
+        });
+      }
+
+      const { requestId, requestVersion, lotId, volunteerId, quantity, instructions } = input;
+      const request = await this.lockRequestForAllocation(client, eventId, requestId, requestVersion);
+      // Use a new statement so Read Committed includes assignments committed while waiting on the request lock.
+      const totals = await client.query<{ delivered: string; held: string }>(
+        `SELECT COALESCE(SUM(delivered_quantity), 0) AS delivered,
+                COALESCE(SUM(assigned_quantity - delivered_quantity) FILTER (
+                  WHERE state IN ('assigned', 'accepted', 'in_transit')
+                ), 0) AS held
+           FROM assignment WHERE event_id = $1 AND request_id = $2`,
+        [eventId, requestId],
+      );
+      const { delivered, held } = totals.rows[0];
+      const allocatableQuantity = Math.max(0, request.verifiedQuantity - Number(delivered) - Number(held));
+
+      const stock = await client.query<{ categoryCode: string; availableQuantity: number }>(
+        `SELECT category_code AS "categoryCode",
+                received_quantity - reserved_quantity - delivered_quantity AS "availableQuantity"
+           FROM stock_lot WHERE event_id = $1 AND id = $2 FOR UPDATE`,
+        [eventId, lotId],
+      );
+      const lot = stock.rows[0];
+      if (!lot) throw new NotFoundException('Stock lot not found');
+      // A category has one unit, enforced by the stock lot's category/unit foreign key.
+      if (lot.categoryCode !== request.categoryCode) {
+        throw new ConflictException({ code: 'INCOMPATIBLE_STOCK', message: 'Stock must match the request category and unit' });
+      }
+      if (quantity > allocatableQuantity) {
+        throw new ConflictException({
+          code: 'INSUFFICIENT_NEED', message: 'The request has less allocatable need than this assignment',
+          details: { allocatableQuantity },
+        });
+      }
+      if (quantity > lot.availableQuantity) {
+        throw new ConflictException({
+          code: 'INSUFFICIENT_STOCK', message: 'The lot has less available stock than this assignment',
+          details: { availableQuantity: lot.availableQuantity },
+        });
+      }
+
+      const updatedLot = await client.query<{ version: number; reservedQuantity: number }>(
+        `UPDATE stock_lot SET reserved_quantity = reserved_quantity + $3, version = version + 1
+          WHERE event_id = $1 AND id = $2 RETURNING version, reserved_quantity AS "reservedQuantity"`,
+        [eventId, lotId, quantity],
+      );
+      const inserted = await client.query<{ id: string; version: number; state: 'assigned'; createdAt: Date }>(
+        `INSERT INTO assignment (event_id, request_id, stock_lot_id, volunteer_id, assigned_quantity, instructions)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, version, state, created_at AS "createdAt"`,
+        [eventId, requestId, lotId, volunteerId, quantity, instructions],
+      );
+      const { id, version, state, createdAt } = inserted.rows[0];
+      await client.query(
+        `UPDATE assistance_request SET version = version + 1, updated_at = clock_timestamp()
+          WHERE event_id = $1 AND id = $2`,
+        [eventId, requestId],
+      );
+      await client.query(
+        `INSERT INTO audit_entry (event_id, actor_id, request_id, stock_lot_id, assignment_id, operation, review_state)
+         VALUES ($1, $2, $3, $4, $5, 'assignment.create', 'verified')`,
+        [eventId, userId, requestId, lotId, id],
+      );
+      return {
+        id, version, state, requestId, lotId, volunteerId,
+        quantity, deliveredQuantity: 0, createdAt: createdAt.toISOString(),
+        requestVersion: request.version + 1,
+        lotVersion: updatedLot.rows[0].version,
+        reservedQuantity: updatedLot.rows[0].reservedQuantity,
+        availableQuantity: lot.availableQuantity - quantity,
+        allocatableQuantity: allocatableQuantity - quantity,
+      };
+    });
+  }
+
+  private async lockRequestForAllocation(
+    client: PoolClient,
+    eventId: string,
+    requestId: string,
+    expectedVersion: number,
+  ) {
+    const result = await client.query<{
+      version: number;
+      reviewState: ReviewState;
+      verifiedQuantity: number | null;
+      categoryCode: string;
+    }>(
+      `SELECT version, review_state AS "reviewState",
+              verified_quantity AS "verifiedQuantity", category_code AS "categoryCode"
+         FROM assistance_request
+        WHERE event_id = $1 AND id = $2
+        FOR UPDATE`,
+      [eventId, requestId],
+    );
+
+    const current = result.rows[0];
+    if (!current) {
+      throw new NotFoundException('Request not found');
+    }
+
+    if (current.version !== expectedVersion) {
+      throw new ConflictException({
+        code: 'STALE_VERSION', message: 'The request version has changed', details: { version: current.version },
+      });
+    }
+
+    if (current.reviewState !== 'verified' || current.verifiedQuantity === null) {
+      throw new ConflictException({ code: 'REQUEST_NOT_VERIFIED', message: 'Only verified requests can receive allocations' });
+    }
+
+    return { ...current, verifiedQuantity: current.verifiedQuantity };
   }
 
   async findVisibleRequest(

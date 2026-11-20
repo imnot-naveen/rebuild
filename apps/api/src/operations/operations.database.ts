@@ -42,7 +42,28 @@ export class OperationsDatabase implements OnModuleDestroy {
     checkReplay?: (client: PoolClient) => Promise<void>,
   ): Promise<T> {
     const fingerprint = createHash('sha256').update(JSON.stringify(['POST', path, input])).digest('hex');
+    for (let attempts = 1; ; attempts++) {
+      try {
+        return await this.runMutation(userId, key, fingerprint, status, write, checkReplay);
+      } catch (error) {
+        if (typeof error !== 'object' || error === null || !('code' in error) ||
+            (error.code !== '40P01' && error.code !== '40001')) {
+          throw error;
+        }
+        if (attempts === 3) {
+          throw new ServiceUnavailableException('Database contention prevented the operation. Retry with the same key.');
+        }
+      }
+    }
+  }
+
+  private async runMutation<T>(
+    userId: string, key: string, fingerprint: string, status: 200 | 201,
+    write: (client: PoolClient) => Promise<T>,
+    checkReplay?: (client: PoolClient) => Promise<void>,
+  ): Promise<T> {
     const client = await this.pool.connect();
+    let rollbackError: Error | undefined;
     try {
       await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
       const claim = await client.query(
@@ -76,10 +97,14 @@ export class OperationsDatabase implements OnModuleDestroy {
       await client.query('COMMIT');
       return response;
     } catch (error) {
-      await client.query('ROLLBACK');
+      try {
+        await client.query('ROLLBACK');
+      } catch (cause) {
+        rollbackError = cause instanceof Error ? cause : new Error('Operations transaction rollback failed');
+      }
       throw error;
     } finally {
-      client.release();
+      client.release(rollbackError);
     }
   }
 }
