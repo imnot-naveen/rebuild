@@ -1,14 +1,15 @@
 # Rebuild status
 
-- Updated 19 November 2026, Asia/Colombo
-- Current milestone M1
+- Updated 20 November 2026, Asia/Colombo
+- Current milestone M2
 - R00 — DONE
 - R01 — DONE
 - R02a — DONE
 - R02b — DONE
 - R03 — DONE
 - R04 — DONE
-- Branch `codex/r04-coordinator-review`
+- R05 — IN_PROGRESS
+- Branch `codex/r05-inventory-reservation`
 
 ## Progress
 
@@ -33,7 +34,14 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Start R05 with inventory and stock reservation. Have Naveen sketch the request and lot lock order and the shared-lot race before implementing the reservation transaction. Review hosted preview provisioning and the remaining estimate at the M1 review.
+Naveen's first reservation code exercise is to lock the request by event and request ID on the transaction client, then check that it is verified and that the supplied version is current. Review that query before adding the separate allocation totals query and the lot lock. Hosted preview provisioning and the remaining estimate are open from M1.
+
+## R05 inventory kickoff · 20 November 2026
+
+- Started from `origin/main` at `8fc831a` after [PR #11](https://github.com/imnot-naveen/rebuild/pull/11) merged. The assistant added coordinator-only stock entry, paginated inventory reads and detail with exact location. Stock creation persists the lot, audit entry and idempotency response together. Database constraints enforce the category-unit pair and keep reserved plus delivered within the received quantity.
+- Both workspace builds passed. The migrations succeeded twice against disposable PostgreSQL 17.6 and PostGIS 3.7.0. All 16 API checks passed, using the committed rollback test because the local exercise copy has a SQL typo. The stock integration case covers concurrent replay, changed payloads, rollback of an invalid stock entry, event and role scope, pagination and rejection of an over-capacity balance.
+- Naveen identified that the second attempt in the shared-lot example must roll back when insufficient stock remains. The assistant reviewed the request-first, lot-second lock order and the availability check after waiting. With 8 cases and two attempts for 5, exactly one assignment can commit and 3 cases remain available.
+- The assignment transaction, stock adjustments and the inventory browser panel are open. R05 acceptance still requires volunteer eligibility, reservation rollback, and contention across both a shared lot and a shared request.
 
 ## R04 review workflow closeout · 19 November 2026
 

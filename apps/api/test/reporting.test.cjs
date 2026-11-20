@@ -58,7 +58,7 @@ async function listen(t, module) {
 
 test('Request reporting and review access through Access and Relief Operations', async (t) => {
   const operations = await isolatedDatabase(t, process.env.DATABASE_URL,
-    'operations/001-resident-requests.sql', 'operations/002-request-review.sql');
+    'operations/001-resident-requests.sql', 'operations/002-request-review.sql', 'operations/003-stock-lots.sql');
   const access = await isolatedDatabase(t, process.env.ACCESS_DATABASE_URL, 'access/001-resident-membership.sql');
   const event = randomUUID();
   const anotherEvent = randomUUID();
@@ -115,14 +115,14 @@ test('Request reporting and review access through Access and Relief Operations',
   const otherToken = await token('auth0|resident-b');
   const coordinatorToken = await token('auth0|coordinator');
 
-  function send(eventId, bearer, { key, body, requestId, action, query } = {}) {
+  function send(eventId, bearer, { key, body, requestId, action, query, resource = 'requests' } = {}) {
     const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
     if (body) {
       headers['content-type'] = 'application/json';
       if (key) headers['idempotency-key'] = key;
     }
     const path = [requestId, action].filter(Boolean).join('/');
-    const url = new URL(`/v1/events/${eventId}/requests${path ? '/' + path : ''}`, operationsApp.url);
+    const url = new URL(`/v1/events/${eventId}/${resource}${path ? '/' + path : ''}`, operationsApp.url);
     url.search = new URLSearchParams(query).toString();
     return httpFetch(url, {
       method: body ? 'POST' : 'GET',
@@ -363,6 +363,68 @@ test('Request reporting and review access through Access and Relief Operations',
     const failed = await operations.db.query('SELECT 1 FROM idempotency_record WHERE operation_key = $1',
       [questions[1 - success].key]);
     assert.equal(failed.rowCount, 0);
+  });
+
+  await t.test('coordinator stock entry persists one lot and audit entry on replay', async () => {
+    const input = {
+      category: validReport.category,
+      unit: validReport.unit,
+      receivedQuantity: 8,
+      location: validReport.location,
+    };
+    const stockKey = randomUUID();
+    const createLot = (bearer, body, operationKey = stockKey) =>
+      send(event, bearer, { key: operationKey, body, resource: 'stock-lots' });
+    const listLots = (eventId, bearer, query) => send(eventId, bearer, { query, resource: 'stock-lots' });
+    const failedKey = randomUUID();
+    assert.equal((await createLot(coordinatorToken, { ...input, unit: 'litres' }, failedKey)).status, 400);
+    assert.equal((await createLot(coordinatorToken, { ...input, receivedQuantity: 0 })).status, 400);
+    assert.equal((await createLot(coordinatorToken, { ...input, location: { ...input.location, latitude: 91 } })).status, 400);
+    assert.equal((await createLot(ownerToken, input)).status, 403);
+    assert.equal((await listLots(event, ownerToken)).status, 403);
+    assert.equal((await operations.db.query(
+      'SELECT 1 FROM idempotency_record WHERE operation_key = $1', [failedKey],
+    )).rowCount, 0);
+
+    const [created, replayed] = await Promise.all([
+      createLot(coordinatorToken, input), createLot(coordinatorToken, input),
+    ]);
+    assert.equal(created.status, 201, await created.clone().text());
+    assert.equal(replayed.status, 201, await replayed.clone().text());
+    const lot = await created.json();
+    assert.deepEqual(await replayed.json(), lot);
+    assert.equal(lot.receivedQuantity, 8);
+    assert.equal(lot.availableQuantity, 8);
+    assert.equal(lot.reservedQuantity, 0);
+    assert.equal(lot.deliveredQuantity, 0);
+    assert.equal(lot.version, 1);
+    assert.equal(lot.location, undefined);
+    assert.equal((await createLot(coordinatorToken, { ...input, receivedQuantity: 9 })).status, 409);
+    assert.equal((await operations.db.query('SELECT 1 FROM stock_lot')).rowCount, 1);
+    assert.deepEqual((await operations.db.query(
+      'SELECT actor_id, stock_lot_id, operation FROM audit_entry WHERE stock_lot_id IS NOT NULL',
+    )).rows, [{ actor_id: coordinator, stock_lot_id: lot.id, operation: 'stock_lot.create' }]);
+    await assert.rejects(operations.db.query('UPDATE stock_lot SET reserved_quantity = 9 WHERE id = $1', [lot.id]),
+      { code: '23514' });
+
+    const detail = (eventId, bearer) => send(eventId, bearer, { requestId: lot.id, resource: 'stock-lots' });
+    assert.deepEqual(await (await detail(event, coordinatorToken)).json(), { ...lot, location: input.location });
+    assert.equal((await detail(anotherEvent, coordinatorToken)).status, 404);
+    assert.deepEqual(await (await listLots(anotherEvent, coordinatorToken)).json(), { stockLots: [], nextCursor: null });
+    const second = await createLot(coordinatorToken, input, failedKey);
+    assert.equal(second.status, 201, await second.clone().text());
+    const secondLot = await second.json();
+    const page = await (await listLots(event, coordinatorToken, { category: input.category, limit: '1' })).json();
+    assert.equal(page.stockLots.length, 1);
+    assert.ok(page.nextCursor);
+    const next = await (await listLots(event, coordinatorToken, {
+      category: input.category, limit: '1', cursor: page.nextCursor,
+    })).json();
+    assert.equal(next.nextCursor, null);
+    assert.equal(next.stockLots.length, 1);
+    assert.deepEqual(new Set([page.stockLots[0].id, next.stockLots[0].id]), new Set([lot.id, secondLot.id]));
+    assert.deepEqual(await (await listLots(event, coordinatorToken, { category: 'blankets' })).json(),
+      { stockLots: [], nextCursor: null });
   });
 
   await t.test('verification and duplicate rejection persist while protected notes stay coordinator-only', async () => {

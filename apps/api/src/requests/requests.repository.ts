@@ -1,16 +1,13 @@
-import { createHash } from 'node:crypto';
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
-  OnModuleDestroy,
-  ServiceUnavailableException,
 } from '@nestjs/common';
-import { Pool, type PoolClient } from 'pg';
+import type { PoolClient } from 'pg';
+import type { PageOptions } from '../operations/input';
+import { OperationsDatabase } from '../operations/operations.database';
 import { RequestReader } from './access-client';
-import { ReportInput, RequestDetail, RequestPageOptions, RequestSummary, ReviewState } from './report';
+import { ReportInput, RequestDetail, RequestSummary, ReviewState } from './report';
 import { nextReviewState, type ReviewCommand, type Urgency } from './review';
 
 type RequestSummaryRow = Omit<RequestSummary, 'createdAt' | 'verifiedQuantity' | 'verifiedUrgency'> & {
@@ -33,30 +30,12 @@ function summarize({ createdAt, verifiedQuantity, verifiedUrgency, ...fields }: 
 }
 
 @Injectable()
-export class RequestsRepository implements OnModuleDestroy {
-  private readonly connection = process.env.DATABASE_URL
-    ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 2000 })
-    : undefined;
-
-  constructor() {
-    const logger = new Logger(RequestsRepository.name);
-    this.connection?.on('error', (error) => logger.error(error.message));
-  }
-
-  private get pool(): Pool {
-    if (!this.connection) {
-      throw new ServiceUnavailableException('Operations database is unavailable');
-    }
-    return this.connection;
-  }
-
-  async onModuleDestroy() {
-    await this.connection?.end();
-  }
+export class RequestsRepository {
+  constructor(private readonly database: OperationsDatabase) {}
 
   async create(eventId: string, userId: string, key: string, input: ReportInput): Promise<RequestSummary> {
-    return this.mutate(userId, key, `/v1/events/${eventId}/requests`, input, 201, async (client) => {
-      await this.lockActiveEvent(client, eventId);
+    return this.database.mutate(userId, key, `/v1/events/${eventId}/requests`, input, 201, async (client) => {
+      await this.database.lockActiveEvent(client, eventId);
       const category = await client.query(
         'SELECT code FROM category WHERE code = $1 AND unit = $2 FOR SHARE',
         [input.category, input.unit],
@@ -98,8 +77,8 @@ export class RequestsRepository implements OnModuleDestroy {
       if (owned.rowCount === 0) throw new NotFoundException('Request not found');
     } : undefined;
 
-    return this.mutate(userId, key, path, command, 200, async (client) => {
-      await this.lockActiveEvent(client, eventId);
+    return this.database.mutate(userId, key, path, command, 200, async (client) => {
+      await this.database.lockActiveEvent(client, eventId);
       const locked = await client.query<Pick<RequestSummary, 'version' | 'reviewState'>>(
         `SELECT version, review_state AS "reviewState"
            FROM assistance_request
@@ -154,64 +133,12 @@ export class RequestsRepository implements OnModuleDestroy {
     }, checkReplay);
   }
 
-  private async lockActiveEvent(client: PoolClient, eventId: string) {
-    const event = await client.query('SELECT id FROM relief_event WHERE id = $1 AND active FOR SHARE', [eventId]);
-    if (event.rowCount === 0) throw new NotFoundException('Active event not found');
-  }
-
-  private async mutate(
-    userId: string, key: string, path: string, input: ReportInput | ReviewCommand, status: 200 | 201,
-    write: (client: PoolClient) => Promise<RequestSummary>,
-    checkReplay?: (client: PoolClient) => Promise<void>,
-  ): Promise<RequestSummary> {
-    const fingerprint = createHash('sha256').update(JSON.stringify(['POST', path, input])).digest('hex');
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
-      const claim = await client.query(
-        `INSERT INTO idempotency_record (actor_id, operation_key, fingerprint)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (actor_id, operation_key) DO NOTHING`,
-        [userId, key, fingerprint],
-      );
-      if (claim.rowCount === 0) {
-        await checkReplay?.(client);
-        const result = await client.query<{ fingerprint: string; response_body: RequestSummary }>(
-          `SELECT fingerprint, response_body
-             FROM idempotency_record
-            WHERE actor_id = $1 AND operation_key = $2`,
-          [userId, key],
-        );
-        const saved = result.rows[0];
-        if (saved.fingerprint !== fingerprint) {
-          throw new ConflictException('This idempotency key was used for another operation');
-        }
-        await client.query('COMMIT');
-        return saved.response_body;
-      }
-      const response = await write(client);
-      await client.query(
-        `UPDATE idempotency_record
-            SET response_status = $3, response_body = $4
-          WHERE actor_id = $1 AND operation_key = $2`,
-        [userId, key, status, response],
-      );
-      await client.query('COMMIT');
-      return response;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
   async findVisibleRequest(
     eventId: string,
     requestId: string,
     reader: RequestReader,
   ): Promise<RequestDetail | null> {
-    const result = await this.pool.query<RequestDetailRow>(
+    const result = await this.database.pool.query<RequestDetailRow>(
       `SELECT r.id, r.version, r.description, c.code AS category, c.unit,
               r.requested_quantity AS quantity, r.review_state AS "reviewState",
               r.created_at AS "createdAt",
@@ -255,11 +182,11 @@ export class RequestsRepository implements OnModuleDestroy {
   async listVisibleRequests(
     eventId: string,
     reader: RequestReader,
-    { limit, before }: RequestPageOptions,
+    { limit, before }: PageOptions,
     reviewState?: ReviewState,
     urgency?: Urgency,
   ) {
-    const result = await this.pool.query<RequestSummaryRow & { cursorCreatedAt: string }>(
+    const result = await this.database.pool.query<RequestSummaryRow & { cursorCreatedAt: string }>(
       `SELECT r.id, r.version, c.code AS category, c.unit,
               r.requested_quantity AS quantity, r.review_state AS "reviewState",
               r.created_at AS "createdAt",

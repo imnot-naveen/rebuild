@@ -26,6 +26,7 @@ async function main() {
   }
   await migrate(operations, 'operations/001-resident-requests.sql');
   await migrate(operations, 'operations/002-request-review.sql');
+  await migrate(operations, 'operations/003-stock-lots.sql');
   await migrate(access, 'access/001-resident-membership.sql');
 }
 

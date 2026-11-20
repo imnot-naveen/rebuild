@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { requiredText } from './report';
+import { requiredText } from '../operations/input';
 import type { ReviewState } from './report';
 
 export type Urgency = 'routine' | 'urgent' | 'critical';

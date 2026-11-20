@@ -77,6 +77,8 @@ Validate IDs, enum values, required nonblank text, integer quantities in the dat
 
 The demo accepts `routine`, `urgent` and `critical` for verification and the queue's urgency filter. A verification carries `confirmedQuantity`, `urgency`, `source` with a `type` and synthetic `reference`, and `rationale`. The demo source types are `shelter_intake` and `field_lead`. Review actions advance the request version and append activity with that version. Coordinator detail includes protected verification notes, actor IDs and related request IDs. Resident detail includes the questions, replies, confirmed quantity and urgency, and any resident-facing rejection reason.
 
+Stock entry accepts `category`, `unit`, `receivedQuantity` and `location` with `latitude` and `longitude`. Create, list and detail return `receivedQuantity`, `reservedQuantity`, `deliveredQuantity` and `availableQuantity`. The list returns `{ stockLots, nextCursor }`. Exact stock location is available through coordinator detail.
+
 Return errors as `{ code, message, details? }`.
 
 | Status | When to return it |
