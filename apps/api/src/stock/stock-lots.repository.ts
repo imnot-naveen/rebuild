@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { PageOptions } from '../operations/input';
 import { OperationsDatabase } from '../operations/operations.database';
+import type { StockAdjustment } from './stock-adjustment';
 
 interface StockLotInput {
   category: string;
@@ -52,6 +53,49 @@ export class StockLotsRepository {
       );
       return serialize(lot);
     });
+  }
+
+  async adjust(eventId: string, lotId: string, userId: string, key: string, input: StockAdjustment) {
+    const path = `/v1/events/${eventId}/stock-lots/${lotId}`;
+    return this.database.mutate(userId, key, path, input, 200, async (client) => {
+      await this.database.lockActiveEvent(client, eventId);
+      const { rows: [lot] } = await client.query<StockLotRow>(
+        `SELECT ${summaryColumns} FROM stock_lot WHERE event_id = $1 AND id = $2 FOR UPDATE`,
+        [eventId, lotId],
+      );
+      if (!lot) throw new NotFoundException('Stock lot not found');
+      if (lot.version !== input.version) {
+        throw new ConflictException({
+          code: 'STALE_VERSION', message: 'The stock lot version has changed', details: { version: lot.version },
+        });
+      }
+      const { receivedQuantity, location, reason } = input;
+      const minimum = lot.reservedQuantity + lot.deliveredQuantity;
+      if (receivedQuantity !== undefined && receivedQuantity < minimum) {
+        throw new ConflictException({
+          code: 'INSUFFICIENT_STOCK',
+          message: 'Received quantity cannot be less than the reserved and delivered total',
+          details: { minimumReceivedQuantity: minimum },
+        });
+      }
+
+      const { rows: [updated] } = await client.query<StockLotRow>(
+        `UPDATE stock_lot
+            SET received_quantity = COALESCE($3, received_quantity),
+                location = CASE WHEN $4::double precision IS NULL THEN location
+                                ELSE ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography END,
+                version = version + 1
+          WHERE event_id = $1 AND id = $2
+          RETURNING ${summaryColumns}`,
+        [eventId, lotId, receivedQuantity, location?.longitude, location?.latitude],
+      );
+      await client.query(
+        `INSERT INTO audit_entry (event_id, actor_id, stock_lot_id, operation, reason)
+         VALUES ($1, $2, $3, 'stock_lot.adjust', $4)`,
+        [eventId, userId, lotId, reason],
+      );
+      return serialize(updated);
+    }, { method: 'PATCH' });
   }
 
   async list(eventId: string, { limit, before }: PageOptions, category?: string) {

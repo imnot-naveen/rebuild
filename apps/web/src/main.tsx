@@ -1,6 +1,7 @@
 import { Auth0Provider, useAuth0 } from '@auth0/auth0-react';
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Inventory } from './inventory';
 import { RequestHelp } from './request-help';
 import { readRequest } from './resident-api';
 import type { GetToken, ReviewRole } from './resident-api';
@@ -18,6 +19,9 @@ function EventRequests({ eventId, getToken }: { eventId: string; getToken: GetTo
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [requestListVersion, setRequestListVersion] = useState(0);
+  const [coordinatorView, setCoordinatorView] = useState<'queue' | 'inventory'>('queue');
+  const [stockRevision, setStockRevision] = useState(0);
+  const refreshStock = () => setStockRevision((value) => value + 1);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -38,12 +42,29 @@ function EventRequests({ eventId, getToken }: { eventId: string; getToken: GetTo
     </>
   );
   if (!access) return <p role="status">Checking event access…</p>;
+  if (access === 'coordinator') return (
+    <>
+      <nav className="coordinator-nav" aria-label="Coordinator workspace">
+        <button type="button" aria-pressed={coordinatorView === 'queue'} onClick={() => setCoordinatorView('queue')}>
+          Requests
+        </button>
+        <button type="button" aria-pressed={coordinatorView === 'inventory'} onClick={() => setCoordinatorView('inventory')}>
+          Inventory
+        </button>
+      </nav>
+      <div hidden={coordinatorView !== 'queue'}>
+        <RequestWorkspace eventId={eventId} getToken={getToken} role={access}
+          stockRevision={stockRevision} onReserved={refreshStock} />
+      </div>
+      <div hidden={coordinatorView !== 'inventory'}>
+        <Inventory eventId={eventId} getToken={getToken} revision={stockRevision} onStockChanged={refreshStock} />
+      </div>
+    </>
+  );
   return (
     <>
-      {access === 'resident' && (
-        <RequestHelp eventId={eventId} getToken={getToken}
-          onSubmitted={() => setRequestListVersion((previous) => previous + 1)} />
-      )}
+      <RequestHelp eventId={eventId} getToken={getToken}
+        onSubmitted={() => setRequestListVersion((previous) => previous + 1)} />
       <RequestWorkspace key={requestListVersion} eventId={eventId} getToken={getToken} role={access} />
     </>
   );

@@ -133,7 +133,7 @@ export class RequestsRepository {
         [eventId, userId, requestId, `request.${command.action}`, state],
       );
       return response;
-    }, checkReplay);
+    }, { checkReplay });
   }
 
   async allocate(eventId: string, userId: string, key: string, input: AllocationInput, eligibility: VolunteerEligibility) {

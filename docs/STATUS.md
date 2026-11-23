@@ -1,6 +1,6 @@
 # Rebuild status
 
-- Updated 20 November 2026, Asia/Colombo
+- Updated 23 November 2026, Asia/Colombo
 - Current milestone M2
 - R00 — DONE
 - R01 — DONE
@@ -8,8 +8,9 @@
 - R02b — DONE
 - R03 — DONE
 - R04 — DONE
-- R05 — IN_PROGRESS
-- Branch `codex/r05-inventory-reservation`
+- R05 — DONE
+- R06 — TODO
+- Branch `codex/r05-coordinator-inventory`
 
 ## Progress
 
@@ -34,7 +35,14 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Finish R05 with stock adjustments and the coordinator inventory and assignment panels. Show a reservation and a stock conflict through the browser, then continue to R06 matching.
+Start R06 with Naveen's TypeScript ranking policy. For a request that needs eight cases, compare a lot two kilometres away with three available cases and a lot six kilometres away with eight. Decide how coverage and distance should affect the order, and specify how equal scores break ties. Freeze those expectations in fixtures before connecting the PostGIS candidate query and Matching service.
+
+## R05 closeout · 23 November 2026
+
+- Started from `origin/main` at `15d4fbd` after [PR #12](https://github.com/imnot-naveen/rebuild/pull/12) merged. The assistant completed the coordinator Inventory and reservation screens and extended the existing transaction pattern to adjust quantity and location. A lot reduction checks the current version and reserved plus delivered quantity under the lot lock. The audit reason and retry response commit with the adjustment. Coordinators select a compatible lot and supply the event volunteer's application user ID.
+- Both workspace builds passed. Migrations succeeded twice against disposable PostgreSQL 17.6 with PostGIS 3.7.0. All 24 API checks passed, including the committed version of the rollback exercise. The two pre-existing local test edits were kept out of the change. Added checks for an audited quantity adjustment to zero, location-only updates, role and event scope, concurrent replay, stale versions, and a stock reduction racing a reservation.
+- Chrome at 390 px used synthetic identities with the real Access and Operations services. A coordinator added nine cases, adjusted the lot to eight and changed its location. Two coordinators opened different verified requests with the same eight-case stock snapshot. The first reservation committed five cases. Its response was withheld and the browser retried with the same key. The second coordinator saw a stock conflict and refreshed to three available cases. PostGIS showed one assignment and five reserved cases. The resident session showed My requests.
+- R05 acceptance is complete locally. The hosted Auth0 tenant walkthrough remains open. R06 will add ranked suggestions to the manual stock selection flow.
 
 ## R05 reservation checkpoint · 20 November 2026
 

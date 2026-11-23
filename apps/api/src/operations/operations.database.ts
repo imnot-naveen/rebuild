@@ -39,9 +39,12 @@ export class OperationsDatabase implements OnModuleDestroy {
   async mutate<T>(
     userId: string, key: string, path: string, input: object, status: 200 | 201,
     write: (client: PoolClient) => Promise<T>,
-    checkReplay?: (client: PoolClient) => Promise<void>,
+    { method = 'POST', checkReplay }: {
+      method?: 'POST' | 'PATCH';
+      checkReplay?: (client: PoolClient) => Promise<void>;
+    } = {},
   ): Promise<T> {
-    const fingerprint = createHash('sha256').update(JSON.stringify(['POST', path, input])).digest('hex');
+    const fingerprint = createHash('sha256').update(JSON.stringify([method, path, input])).digest('hex');
     for (let attempts = 1; ; attempts++) {
       try {
         return await this.runMutation(userId, key, fingerprint, status, write, checkReplay);

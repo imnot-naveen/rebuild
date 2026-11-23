@@ -1,3 +1,7 @@
+import { fetchEvent } from './event-api';
+import type { GetToken } from './event-api';
+
+export type { GetToken } from './event-api';
 export type ReviewRole = 'resident' | 'coordinator';
 export type Urgency = 'routine' | 'urgent' | 'critical';
 export type ReviewAction = 'clarify' | 'reply' | 'verify' | 'reject' | 'link';
@@ -36,8 +40,6 @@ export interface RequestPage {
   nextCursor: string | null;
 }
 
-export type GetToken = () => Promise<string | undefined>;
-
 const errorMessages: Record<number, string> = {
   401: 'Your session has expired. Log out and sign in again.',
   403: 'Your account does not have permission for this action in this event.',
@@ -59,33 +61,10 @@ async function sendRequest(
   signal: AbortSignal,
   options: RequestInit = {},
 ): Promise<Response> {
-  let token: string | undefined;
-  try {
-    token = await getToken();
-  } catch {
-    throw new Error('Your sign-in could not be refreshed. Log out and sign in again.');
-  }
-  if (!token) throw new Error('Your session has expired. Log out and sign in again.');
-  signal.throwIfAborted();
-
-  const headers = new Headers(options.headers);
-  headers.set('Authorization', `Bearer ${token}`);
-  headers.set('Accept', 'application/json');
-
-  let response: Response;
-  try {
-    response = await fetch(`/v1/events/${encodeURIComponent(eventId)}/requests${path}`, {
-      ...options,
-      headers,
-      cache: 'no-store',
-      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
-    });
-  } catch {
-    const message = options.method === 'POST'
+  const response = await fetchEvent(eventId, getToken, `/requests${path}`, signal, options,
+    options.method === 'POST'
       ? 'We could not confirm your submission. Send the same information again to retry safely.'
-      : 'The requests service could not be reached. Check your connection and try again.';
-    throw new Error(message);
-  }
+      : 'The requests service could not be reached. Check your connection and try again.');
 
   if (!response.ok) {
     if (options.method === 'POST' && (response.status === 400 || (path && response.status === 409))) {
