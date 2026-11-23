@@ -79,6 +79,8 @@ The demo accepts `routine`, `urgent` and `critical` for verification and the que
 
 Stock entry accepts `category`, `unit`, `receivedQuantity` and `location` with `latitude` and `longitude`. Create, list and detail return `receivedQuantity`, `reservedQuantity`, `deliveredQuantity` and `availableQuantity`. The list returns `{ stockLots, nextCursor }`. Exact stock location is available through coordinator detail.
 
+Stock adjustment accepts the current lot `version` and at least one of `receivedQuantity` or `location`. Include a nonblank `reason` of up to 2,000 characters when supplying `receivedQuantity`. The reason goes in the audit entry. The response returns the updated lot summary. A stale lot returns `409 STALE_VERSION` with its current `version`. A reduction below the reserved and delivered total returns `409 INSUFFICIENT_STOCK` with `minimumReceivedQuantity`.
+
 Assignment creation accepts `requestId`, `requestVersion`, `lotId`, `volunteerId`, `quantity` and optional `instructions` of up to 2,000 characters. The response includes the assignment's ID, version and state, the new request and lot versions, the lot's reserved and available quantities, and the request's allocatable quantity. A stale request returns `409 STALE_VERSION` with its current `version`. Quantity conflicts return `409 INSUFFICIENT_NEED` or `409 INSUFFICIENT_STOCK` with the current allocatable or available quantity. A user without a volunteer membership in the event returns `400 INVALID_VOLUNTEER`.
 
 Return errors as `{ code, message, details? }`.
@@ -122,7 +124,7 @@ sequenceDiagram
     A->>A: Check 8 available and reserve 5
     A->>L: Commit assignment, reservation and audit
     L-->>B: Lock granted with 3 now available
-    B->>B: Roll back and return 409 STOCK_UNAVAILABLE
+    B->>B: Roll back and return 409 INSUFFICIENT_STOCK
 ```
 
 The lot ends with 5 reserved, 0 delivered and 3 available. Exactly one assignment and its audit entry commit. The conflict response includes current availability, so the second coordinator can select another lot or explicitly submit a smaller allocation under a new operation key.

@@ -59,7 +59,7 @@ async function listen(t, module) {
 test('Request reporting and review access through Access and Relief Operations', async (t) => {
   const operations = await isolatedDatabase(t, process.env.DATABASE_URL,
     'operations/001-resident-requests.sql', 'operations/002-request-review.sql',
-    'operations/003-stock-lots.sql', 'operations/004-assignments.sql');
+    'operations/003-stock-lots.sql', 'operations/004-assignments.sql', 'operations/005-stock-adjustments.sql');
   const access = await isolatedDatabase(t, process.env.ACCESS_DATABASE_URL, 'access/001-resident-membership.sql');
   const event = randomUUID();
   const anotherEvent = randomUUID();
@@ -120,7 +120,8 @@ test('Request reporting and review access through Access and Relief Operations',
   const otherToken = await token('auth0|resident-b');
   const coordinatorToken = await token('auth0|coordinator');
 
-  function send(eventId, bearer, { key, body, requestId, action, query, resource = 'requests' } = {}) {
+  function send(eventId, bearer, { key, body, requestId, action, query, resource = 'requests',
+    method = body ? 'POST' : 'GET' } = {}) {
     const headers = bearer ? { authorization: `Bearer ${bearer}` } : {};
     if (body) {
       headers['content-type'] = 'application/json';
@@ -130,7 +131,7 @@ test('Request reporting and review access through Access and Relief Operations',
     const url = new URL(`/v1/events/${eventId}/${resource}${path ? '/' + path : ''}`, operationsApp.url);
     url.search = new URLSearchParams(query).toString();
     return httpFetch(url, {
-      method: body ? 'POST' : 'GET',
+      method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(6000),
@@ -432,6 +433,46 @@ test('Request reporting and review access through Access and Relief Operations',
       { stockLots: [], nextCursor: null });
   });
 
+  await t.test('stock adjustments check scope and version, record the reason and replay safely', async () => {
+    const location = { latitude: 6.91, longitude: 79.87 };
+    const original = { category: 'drinking-water', unit: 'cases', receivedQuantity: 8, location };
+    const lot = await (await send(event, coordinatorToken, {
+      body: original, key: randomUUID(), resource: 'stock-lots',
+    })).json();
+    const adjust = (body, options = {}) => send(options.eventId ?? event, options.token ?? coordinatorToken, {
+      method: 'PATCH', resource: 'stock-lots', requestId: lot.id, key: options.key ?? randomUUID(), body,
+    });
+    assert.equal((await adjust({ version: 1, receivedQuantity: 0 })).status, 400);
+    assert.equal((await adjust({ version: 1 })).status, 400);
+    assert.equal((await adjust({ version: 1, location }, { eventId: anotherEvent })).status, 404);
+    assert.equal((await adjust({ version: 1, location }, { token: ownerToken })).status, 403);
+
+    const changedLocation = { latitude: 6.92, longitude: 79.88 };
+    const key = randomUUID();
+    const command = { version: 1, receivedQuantity: 0, reason: '  Recounted stock  ', location: changedLocation };
+    const [updated, replay] = await Promise.all([adjust(command, { key }), adjust(command, { key })]);
+    assert.equal(updated.status, 200, await updated.clone().text());
+    assert.equal(replay.status, 200);
+    const stock = await updated.json();
+    assert.deepEqual(await replay.json(), stock);
+    assert.deepEqual(stock, { ...lot, version: 2, availableQuantity: 0, receivedQuantity: 0 });
+    assert.equal((await adjust({ ...command, reason: 'Changed the reason' }, { key })).status, 409);
+    const stale = await adjust({ ...command, receivedQuantity: 2 });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(await stale.json(), {
+      code: 'STALE_VERSION', message: 'The stock lot version has changed', details: { version: 2 },
+    });
+    assert.deepEqual((await operations.db.query(
+      "SELECT reason FROM audit_entry WHERE stock_lot_id = $1 AND operation = 'stock_lot.adjust'", [lot.id],
+    )).rows, [{ reason: 'Recounted stock' }]);
+    const detail = await send(event, coordinatorToken, { requestId: lot.id, resource: 'stock-lots' });
+    assert.deepEqual(await detail.json(), { ...stock, location: changedLocation });
+
+    const moved = await adjust({ version: 2, location });
+    assert.equal(moved.status, 200);
+    assert.deepEqual(await moved.json(), { ...stock, version: 3 });
+  });
+
   await t.test('assignment reservation checks eligibility and commits stock, request, audit and replay together', async (t) => {
     const volunteer = randomUUID();
     const foreignVolunteer = randomUUID();
@@ -581,6 +622,35 @@ test('Request reporting and review access through Access and Relief Operations',
         details: { allocatableQuantity: 3 },
       });
       assert.deepEqual(await balance(losingLot), { reserved: 0, available: 8, version: 1 });
+    });
+
+    await t.test('stock reductions and reservations serialize on the lot balance', async () => {
+      const request = await newRequest();
+      const lot = await newLot();
+      const key = randomUUID();
+      const reduce = (version) => send(event, coordinatorToken, {
+        method: 'PATCH', resource: 'stock-lots', requestId: lot.id, key,
+        body: { version, receivedQuantity: 3, reason: 'Recounted stock' },
+      });
+      const [reserved, reduced] = await Promise.all([assign(request, lot), reduce(lot.version)]);
+      if (reserved.status === 201) {
+        assert.equal(reduced.status, 409);
+        assert.equal((await reduced.json()).code, 'STALE_VERSION');
+        const blocked = await reduce(lot.version + 1);
+        assert.equal(blocked.status, 409);
+        assert.deepEqual((await blocked.json()).details, { minimumReceivedQuantity: 5 });
+        assert.equal((await operations.db.query(
+          'SELECT 1 FROM idempotency_record WHERE operation_key = $1', [key],
+        )).rowCount, 0);
+      } else {
+        assert.equal(reduced.status, 200, await reduced.clone().text());
+        assert.equal(reserved.status, 409);
+        assert.deepEqual((await reserved.json()).details, { availableQuantity: 3 });
+      }
+      const detail = await send(event, coordinatorToken, { resource: 'stock-lots', requestId: lot.id });
+      const { receivedQuantity, reservedQuantity, availableQuantity } = await detail.json();
+      assert.deepEqual([receivedQuantity, reservedQuantity, availableQuantity],
+        reserved.status === 201 ? [8, 5, 3] : [3, 0, 3]);
     });
 
     await t.test('audit failure rolls back reservation, request version, assignment and operation key', async () => {

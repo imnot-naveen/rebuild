@@ -35,6 +35,22 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
+.coordinator-nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+
+.coordinator-nav button[aria-pressed="true"] {
+  background: #e4f2e9;
+  border-color: #215d4d;
+  font-weight: 600;
+}
+
+.form-status {
+  overflow-wrap: anywhere;
+}
+
 .requests {
   display: grid;
   gap: 0.5rem;

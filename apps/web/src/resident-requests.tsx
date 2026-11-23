@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AssignmentForm } from './assignment-form';
 import { readRequest } from './resident-api';
 import type { GetToken, RequestDetail, RequestPage, RequestSummary, ReviewAction, ReviewRole } from './resident-api';
 import { actionLabels, RequestReviewForm } from './request-review';
@@ -7,6 +8,8 @@ interface WorkspaceProps {
   eventId: string;
   getToken: GetToken;
   role: ReviewRole;
+  stockRevision?: number;
+  onReserved?: () => void;
 }
 
 const reviewLabels: Record<string, string> = {
@@ -27,7 +30,7 @@ function RequestDate({ value }: { value: string }) {
   return <time dateTime={value}>{requestDate.format(new Date(value))}</time>;
 }
 
-function RequestDetails({ eventId, getToken, requestId, role, onUpdated }: WorkspaceProps & {
+function RequestDetails({ eventId, getToken, requestId, role, stockRevision = 0, onReserved, onUpdated }: WorkspaceProps & {
   requestId: string;
   onUpdated: () => void;
 }) {
@@ -91,6 +94,16 @@ function RequestDetails({ eventId, getToken, requestId, role, onUpdated }: Works
             <dt>Location (latitude, longitude)</dt>
             <dd>{detail.location.latitude}, {detail.location.longitude}</dd>
           </dl>
+          {role === 'coordinator' && detail.reviewState === 'verified' && (
+            <AssignmentForm access={{ eventId, getToken }} request={detail} stockRevision={stockRevision}
+              onRefresh={() => { refresh(); onUpdated(); }} onSaved={(assignment) => {
+                setStatus(`Reserved ${assignment.quantity} ${detail.unit}. Assignment ${assignment.id}. ` +
+                  `${assignment.availableQuantity} available in this lot and ${assignment.allocatableQuantity} still allocatable for this request.`);
+                refresh();
+                onUpdated();
+                onReserved?.();
+              }} />
+          )}
           {detail.activity.length > 0 && (
             <>
               <h3>Request activity</h3>
@@ -135,7 +148,7 @@ function RequestDetails({ eventId, getToken, requestId, role, onUpdated }: Works
   );
 }
 
-export function RequestWorkspace({ eventId, getToken, role }: WorkspaceProps) {
+export function RequestWorkspace({ eventId, getToken, role, stockRevision, onReserved }: WorkspaceProps) {
   const [requests, setRequests] = useState<RequestSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [page, setPage] = useState({ cursor: '', reviewState: '', urgency: '' });
@@ -238,7 +251,7 @@ export function RequestWorkspace({ eventId, getToken, role }: WorkspaceProps) {
       )}
       {selectedId && (
         <RequestDetails key={selectedId} eventId={eventId} getToken={getToken} requestId={selectedId}
-          role={role} onUpdated={() => loadPage('')} />
+          role={role} stockRevision={stockRevision} onReserved={onReserved} onUpdated={() => loadPage('')} />
       )}
     </section>
   );

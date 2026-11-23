@@ -7,6 +7,7 @@ import {
   NotFoundException,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseFilters,
@@ -14,6 +15,7 @@ import {
 import { parseLocation, parsePage, parsePositiveQuantity, requiredText } from '../operations/input';
 import { OperationsErrorFilter, requireIdempotencyKey } from '../operations/operations-http';
 import { AccessClient } from '../requests/access-client';
+import { parseStockAdjustment } from './stock-adjustment';
 import { StockLotsRepository } from './stock-lots.repository';
 
 @Controller('v1/events/:eventId/stock-lots')
@@ -57,6 +59,20 @@ export class StockLotsController {
     return this.stockLots.list(
       eventId, parsePage(limit, cursor, 'stock lot'),
       category === undefined ? undefined : requiredText(category, 'Category', 64),
+    );
+  }
+
+  @Patch(':lotId')
+  async adjust(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('lotId', ParseUUIDPipe) lotId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const userId = await this.access.requireCoordinator(eventId, authorization);
+    return this.stockLots.adjust(
+      eventId.toLowerCase(), lotId.toLowerCase(), userId, requireIdempotencyKey(key), parseStockAdjustment(body),
     );
   }
 
