@@ -30,6 +30,7 @@ async function main() {
   await migrate(operations, 'operations/004-assignments.sql');
   await migrate(operations, 'operations/005-stock-adjustments.sql');
   await migrate(operations, 'operations/006-stock-matching.sql');
+  await migrate(operations, 'operations/007-delivery-records.sql');
   await migrate(access, 'access/001-resident-membership.sql');
 }
 

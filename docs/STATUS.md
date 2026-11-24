@@ -10,8 +10,8 @@
 - R04 — DONE
 - R05 — DONE
 - R06 — DONE
-- R07 — TODO
-- Branch `codex/r06-matching`
+- R07 — IN_PROGRESS
+- Branch `codex/r07-fulfilment`
 
 ## Progress
 
@@ -36,7 +36,14 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Start R07 with Naveen's delivery and cancellation rules. Given an assignment for eight cases with five already delivered, trace the request and stock balances when the coordinator cancels and releases the remaining three. Decide which assignment states allow delivery or cancellation and use the request, lot and assignment lock order in the transaction walkthrough.
+Naveen's first R07 implementation exercise is the coordinator cancellation transaction. Reuse `OperationsDatabase.mutate` for the operation key. Read the assignment's immutable parent IDs, then lock the request, lot and assignment in that order. After locking, check the current version and active state. Release `assigned_quantity - delivered_quantity`, advance the three versions, and commit the cancellation reason and audit entry with the update. Demonstrate `409 STALE_VERSION` for the losing command and a safe replay of a successful cancellation.
+
+## R07 kickoff · 24 November 2026
+
+- Brought the 25 November kickoff forward and branched from `origin/main` at `fe0549d` after [PR #14](https://github.com/imnot-naveen/rebuild/pull/14) merged. Naveen identified that five cases remain delivered. The assistant traced the cancellation to five available, zero reserved and five delivered, with five cases both outstanding and allocatable. Naveen also identified that a concurrent cancellation loses to a delivery that commits first and that a refreshed cancellation releases the one case still held. The assistant confirmed the `409 STALE_VERSION` response and version check under lock.
+- The assistant added the delivery-record migration and assignment list and detail routes. The list supports state filtering and pagination. Access scopes volunteers to their own assignments, and only accepted or in-transit detail reveals exact location and instructions to the volunteer. The demo general area rounds coordinates to the nearest tenth of a degree. Confirm the general-area presentation with an organizer before live use.
+- Both workspace builds passed. Migrations ran twice on disposable PostgreSQL 17.6 and PostGIS 3.7.0, and 27 API tests passed using the committed versions of the two locally edited tests. The new HTTP case checks role, event and ownership boundaries, pagination, role revocation and changes in location visibility across seeded states.
+- Volunteer actions, delivery and cancellation writes, the mobile workflow and the end-to-end acceptance run are pending. Focused time was not measured.
 
 ## R06 matching closeout · 24 November 2026
 
