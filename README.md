@@ -50,6 +50,12 @@ npm run test:r03 --workspace @rebuild/api
 
 The test covers persisted submissions, retry behavior, role and event access, and concurrent review actions. Another resident, another event, and an unknown request ID each receive `404` when outside the caller's visibility.
 
+### Run stock suggestions
+
+Add `MATCHING_URL` from `.env.example` and set `MATCHING_INTERNAL_KEY` to a locally generated secret distinct from `ACCESS_INTERNAL_KEY`. Operations and Matching use the same matching key. Run `npm run db:migrate` to add the available-stock spatial index, then start Matching with `npm run dev:matching` alongside Access and Operations. Matching defaults to loopback on port 3002 and needs no database connection. For a compiled run, use `npm run start:matching --workspace @rebuild/api`.
+
+Open a verified request as a coordinator and choose a suggested lot in the reservation form to see how much need it covers. The stock picker also supports manual selection if Matching is unavailable. The [API contract](docs/DATA-API-CONTRACT.md#stock-suggestions) describes the candidate limits, ordering and responses.
+
 ## Try the request and review screens
 
 In `apps/web/.env.local`, set `VITE_AUTH0_AUDIENCE` to the API Identifier used for `AUTH0_AUDIENCE` in the backend and `VITE_RELIEF_EVENT_ID` to the UUID of the local synthetic event. The Operations database needs that event, and the Access database needs an `app_user` whose issuer and subject match the resident's Auth0 identity and an `event_member` row for the event with role `resident`.

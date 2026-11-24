@@ -6,6 +6,7 @@
   "scripts": {
     "dev:api": "npm run dev --workspace @rebuild/api",
     "dev:access": "npm run dev:access --workspace @rebuild/api",
+    "dev:matching": "npm run dev:matching --workspace @rebuild/api",
     "db:migrate": "node --env-file-if-exists=.env db/migrate.cjs",
     "dev:web": "npm run dev --workspace @rebuild/web",
     "build": "npm run build --workspaces",

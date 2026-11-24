@@ -17,3 +17,10 @@ export function parseAllocation(body: unknown) {
 }
 
 export type AllocationInput = ReturnType<typeof parseAllocation>;
+
+// Bind the event ID as $1 and the request ID as $2.
+export const assignmentTotalsSql = `SELECT COALESCE(SUM(delivered_quantity), 0) AS delivered,
+       COALESCE(SUM(assigned_quantity - delivered_quantity) FILTER (
+         WHERE state IN ('assigned', 'accepted', 'in_transit')
+       ), 0) AS held
+  FROM assignment WHERE event_id = $1 AND request_id = $2`;

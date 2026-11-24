@@ -9,7 +9,7 @@ import type { PoolClient } from 'pg';
 import type { PageOptions } from '../operations/input';
 import { OperationsDatabase } from '../operations/operations.database';
 import type { RequestReader, VolunteerEligibility } from './access-client';
-import type { AllocationInput } from './allocation';
+import { assignmentTotalsSql, type AllocationInput } from './allocation';
 import { ReportInput, RequestDetail, RequestSummary, ReviewState } from './report';
 import { nextReviewState, type ReviewCommand, type Urgency } from './review';
 
@@ -152,11 +152,7 @@ export class RequestsRepository {
       const request = await this.lockRequestForAllocation(client, eventId, requestId, requestVersion);
       // Use a new statement so Read Committed includes assignments committed while waiting on the request lock.
       const totals = await client.query<{ delivered: string; held: string }>(
-        `SELECT COALESCE(SUM(delivered_quantity), 0) AS delivered,
-                COALESCE(SUM(assigned_quantity - delivered_quantity) FILTER (
-                  WHERE state IN ('assigned', 'accepted', 'in_transit')
-                ), 0) AS held
-           FROM assignment WHERE event_id = $1 AND request_id = $2`,
+        assignmentTotalsSql,
         [eventId, requestId],
       );
       const { delivered, held } = totals.rows[0];

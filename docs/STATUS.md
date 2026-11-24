@@ -1,6 +1,6 @@
 # Rebuild status
 
-- Updated 23 November 2026, Asia/Colombo
+- Updated 24 November 2026, Asia/Colombo
 - Current milestone M2
 - R00 — DONE
 - R01 — DONE
@@ -9,8 +9,9 @@
 - R03 — DONE
 - R04 — DONE
 - R05 — DONE
-- R06 — TODO
-- Branch `codex/r05-coordinator-inventory`
+- R06 — DONE
+- R07 — TODO
+- Branch `codex/r06-matching`
 
 ## Progress
 
@@ -35,7 +36,14 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Start R06 with Naveen's TypeScript ranking policy. For a request that needs eight cases, compare a lot two kilometres away with three available cases and a lot six kilometres away with eight. Decide how coverage and distance should affect the order, and specify how equal scores break ties. Freeze those expectations in fixtures before connecting the PostGIS candidate query and Matching service.
+Start R07 with Naveen's delivery and cancellation rules. Given an assignment for eight cases with five already delivered, trace the request and stock balances when the coordinator cancels and releases the remaining three. Decide which assignment states allow delivery or cancellation and use the request, lot and assignment lock order in the transaction walkthrough.
+
+## R06 matching closeout · 24 November 2026
+
+- Started from `origin/main` at `c46464b` after [PR #13](https://github.com/imnot-naveen/rebuild/pull/13) merged. Naveen chose distance first, so three available cases at 2 km rank ahead of eight at 6 km for a request needing eight. The assistant implemented coverage as the first tie-break and ascending lot ID as the final tie-break. The [versioned fixture](../apps/api/test/fixtures/ranking-distance-first-v1.json) preserves the inputs and expected output for R12.
+- Operations reads the request version, allocatable need and compatible stock in one PostGIS snapshot. The demo uses a 25 km radius and a 100-lot cap. Confirm the radius with an organizer and revisit the cap during surge measurement. The private TypeScript service receives lot IDs, distances and quantities. The coordinator sees ranked options and coverage in the reservation form. Reservations still validate current eligibility and balances in Operations.
+- `npm run build` passed for both workspaces. `npm run db:migrate` ran twice against disposable PostgreSQL 17.6 and PostGIS 3.7.0. All 26 API checks passed using the committed versions of the two locally edited tests. Checks covered candidate filtering and the cap, ranking ties and input preservation, updated coverage after a reservation, request and role scope, and manual allocation with Matching stopped.
+- Chrome at 390 px used synthetic identities with real Access, Operations, Matching and PostGIS. The coordinator saw the three-case lot first, read the coverage explanation and reserved two cases. After Matching was stopped, another coordinator reserved five using manual selection. PostGIS showed the two expected reservation balances. The hosted Auth0 tenant walkthrough remains open. Focused time was not measured.
 
 ## R05 closeout · 23 November 2026
 

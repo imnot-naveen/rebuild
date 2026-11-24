@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Headers,
   HttpCode,
   NotFoundException,
@@ -11,6 +12,8 @@ import {
   Query,
   UseFilters,
 } from '@nestjs/common';
+import { MatchSnapshotsRepository } from '../matching/match-snapshots.repository';
+import { MatchingClient } from '../matching/matching-client';
 import { parsePage } from '../operations/input';
 import { OperationsErrorFilter, requireIdempotencyKey } from '../operations/operations-http';
 import { AccessClient } from './access-client';
@@ -25,6 +28,8 @@ export class RequestsController {
   constructor(
     private readonly access: AccessClient,
     private readonly requests: RequestsRepository,
+    private readonly matchSnapshots: MatchSnapshotsRepository,
+    private readonly matching: MatchingClient,
   ) {}
 
   @Post()
@@ -80,6 +85,18 @@ export class RequestsController {
   ) {
     const { role } = await this.access.requireRequestReader(eventId, authorization);
     return { role };
+  }
+
+  @Get(':requestId/matches')
+  @Header('Cache-Control', 'no-store')
+  async matches(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @Headers('authorization') authorization: string | undefined,
+  ) {
+    await this.access.requireCoordinator(eventId, authorization);
+    const { requestVersion, allocatableQuantity, candidates } = await this.matchSnapshots.read(eventId, requestId);
+    return { requestVersion, allocatableQuantity, ...await this.matching.rank({ allocatableQuantity, candidates }) };
   }
 
   @Get(':requestId')

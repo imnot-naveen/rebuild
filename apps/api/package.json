@@ -4,9 +4,11 @@
   "scripts": {
     "dev": "node --watch --env-file-if-exists=../../.env --require ts-node/register src/main.ts",
     "dev:access": "node --watch --env-file-if-exists=../../.env --require ts-node/register src/access-main.ts",
+    "dev:matching": "node --watch --env-file-if-exists=../../.env --require ts-node/register src/matching-main.ts",
     "build": "tsc --project tsconfig.json",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "start:access": "node --env-file-if-exists=../../.env dist/access-main.js",
+    "start:matching": "node --env-file-if-exists=../../.env dist/matching-main.js",
     "test": "npm run build && node --env-file-if-exists=../../.env --test",
     "test:r03": "node --env-file-if-exists=../../.env --test test/reporting.test.cjs"
   },

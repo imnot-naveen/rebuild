@@ -14,10 +14,19 @@ export class OperationsDatabase implements OnModuleDestroy {
   private readonly connection = process.env.DATABASE_URL
     ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 2000 })
     : undefined;
+  private readonly matchingConnection = process.env.DATABASE_URL
+    ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 4,
+      connectionTimeoutMillis: 500,
+      statement_timeout: 1500,
+    })
+    : undefined;
 
   constructor() {
     const logger = new Logger(OperationsDatabase.name);
     this.connection?.on('error', (error) => logger.error(error.message));
+    this.matchingConnection?.on('error', (error) => logger.error(error.message));
   }
 
   get pool(): Pool {
@@ -27,8 +36,13 @@ export class OperationsDatabase implements OnModuleDestroy {
     return this.connection;
   }
 
+  get matchingPool(): Pool {
+    if (!this.matchingConnection) throw new ServiceUnavailableException('Operations database is unavailable');
+    return this.matchingConnection;
+  }
+
   async onModuleDestroy() {
-    await this.connection?.end();
+    await Promise.all([this.connection?.end(), this.matchingConnection?.end()]);
   }
 
   async lockActiveEvent(client: PoolClient, eventId: string) {
