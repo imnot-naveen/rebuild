@@ -27,6 +27,18 @@ export interface StockPage {
   nextCursor: string | null;
 }
 
+export interface SuggestedLots {
+  requestVersion: number;
+  allocatableQuantity: number;
+  candidates: {
+    lotId: string;
+    distanceMetres: number;
+    availableQuantity: number;
+    coveredQuantity: number;
+    explanation: string;
+  }[];
+}
+
 export interface Reservation {
   id: string;
   quantity: number;

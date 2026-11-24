@@ -1,5 +1,7 @@
 import { Controller, Get, Headers, HttpCode, Module } from '@nestjs/common';
 import { AccessTokenVerifier } from './access-token';
+import { MatchSnapshotsRepository } from './matching/match-snapshots.repository';
+import { MatchingClient } from './matching/matching-client';
 import { OperationsDatabase } from './operations/operations.database';
 import { AccessClient } from './requests/access-client';
 import { AssignmentsController, RequestsController } from './requests/requests.controller';
@@ -28,6 +30,7 @@ class AuthCheckController {
 
 @Module({
   controllers: [HealthController, AuthCheckController, RequestsController, StockLotsController, AssignmentsController],
-  providers: [AccessTokenVerifier, AccessClient, OperationsDatabase, RequestsRepository, StockLotsRepository],
+  providers: [AccessTokenVerifier, AccessClient, OperationsDatabase, RequestsRepository, StockLotsRepository,
+    MatchSnapshotsRepository, MatchingClient],
 })
 export class AppModule {}

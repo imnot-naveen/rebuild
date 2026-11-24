@@ -9,6 +9,7 @@ const { exportJWK, generateKeyPair, SignJWT } = require('jose');
 const { Pool } = require('pg');
 const { AccessModule } = require('../dist/access/access.module');
 const { AppModule } = require('../dist/app.module');
+const { MatchingModule } = require('../dist/matching/matching.module');
 
 const validReport = {
   category: 'drinking-water',
@@ -59,7 +60,8 @@ async function listen(t, module) {
 test('Request reporting and review access through Access and Relief Operations', async (t) => {
   const operations = await isolatedDatabase(t, process.env.DATABASE_URL,
     'operations/001-resident-requests.sql', 'operations/002-request-review.sql',
-    'operations/003-stock-lots.sql', 'operations/004-assignments.sql', 'operations/005-stock-adjustments.sql');
+    'operations/003-stock-lots.sql', 'operations/004-assignments.sql', 'operations/005-stock-adjustments.sql',
+    'operations/006-stock-matching.sql');
   const access = await isolatedDatabase(t, process.env.ACCESS_DATABASE_URL, 'access/001-resident-membership.sql');
   const event = randomUUID();
   const anotherEvent = randomUUID();
@@ -104,6 +106,9 @@ test('Request reporting and review access through Access and Relief Operations',
   process.env.ACCESS_INTERNAL_KEY = randomUUID();
   const accessApp = await listen(t, AccessModule);
   process.env.ACCESS_URL = accessApp.url;
+  process.env.MATCHING_INTERNAL_KEY = randomUUID();
+  const matchingApp = await listen(t, MatchingModule);
+  process.env.MATCHING_URL = matchingApp.url;
   const operationsApp = await listen(t, AppModule);
 
   function token(subject) {
@@ -490,8 +495,8 @@ test('Request reporting and review access through Access and Relief Operations',
     await operations.db.query("INSERT INTO category (code, unit) VALUES ('blankets', 'bundles')");
     const secondCoordinatorToken = await token('auth0|second-coordinator');
 
-    async function newRequest(verify = true) {
-      const created = await send(event, ownerToken, { body: validReport, key: randomUUID() });
+    async function newRequest(verify = true, body = validReport) {
+      const created = await send(event, ownerToken, { body, key: randomUUID() });
       assert.equal(created.status, 201, await created.clone().text());
       const request = await created.json();
       if (!verify) return request;
@@ -704,6 +709,94 @@ test('Request reporting and review access through Access and Relief Operations',
         await operations.db.query(`DROP TRIGGER retry_assignment_audit ON audit_entry;
           DROP FUNCTION retry_assignment_audit(); DROP SEQUENCE reservation_attempts`);
       }
+    });
+
+    await t.test('ranks nearby eligible stock and preserves manual reservation during a Matching outage', async () => {
+      const category = 'matching-water';
+      await operations.db.query('INSERT INTO category (code, unit) VALUES ($1, $2)', [category, validReport.unit]);
+      const request = await newRequest(true, { ...validReport, category });
+      const args = { requestId: request.id, action: 'matches' };
+      const suggestions = () => send(event, coordinatorToken, args);
+      assert.equal((await send(event, undefined, args)).status, 401);
+      assert.equal((await send(event, ownerToken, args)).status, 403);
+      assert.equal((await send(anotherEvent, coordinatorToken, args)).status, 404);
+      assert.equal((await send(event, coordinatorToken, { ...args, requestId: (await newRequest(false)).id })).status, 409);
+      assert.deepEqual(await (await suggestions()).json(), {
+        requestVersion: request.version, allocatableQuantity: 8, policyVersion: null, candidates: [],
+      });
+
+      async function seedLot(longitudeOffset, quantity, eventId = event, lotCategory = category) {
+        const { rows } = await operations.db.query(
+          `INSERT INTO stock_lot (event_id, category_code, unit, received_quantity, location)
+           VALUES ($1, $2, 'cases', $3, ST_Point($4, $5, 4326)::geography) RETURNING id`,
+          [eventId, lotCategory, quantity, validReport.location.longitude + longitudeOffset, validReport.location.latitude],
+        );
+        return rows[0];
+      }
+
+      const far = await seedLot(0.055, 8);
+      const near = await seedLot(0.018, 3);
+      await seedLot(0, 0);
+      await seedLot(0, 10, anotherEvent);
+      await seedLot(0, 10, event, validReport.category);
+      await seedLot(0.3, 10);
+
+      const response = await suggestions();
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      const snapshot = await response.json();
+      assert.equal(snapshot.policyVersion, 'distance-first-v1');
+      assert.equal(snapshot.requestVersion, request.version);
+      assert.equal(snapshot.allocatableQuantity, 8);
+      assert.deepEqual(snapshot.candidates.map(({ lotId, distanceMetres, ...coverage }) => {
+        assert.ok(distanceMetres > 0);
+        return { lotId, ...coverage };
+      }), [
+        { lotId: near.id, availableQuantity: 3, coveredQuantity: 3,
+          explanation: 'Covers 3 of 8 needed. Ranked by distance, then coverage.' },
+        { lotId: far.id, availableQuantity: 8, coveredQuantity: 8,
+          explanation: 'Covers 8 of 8 needed. Ranked by distance, then coverage.' },
+      ]);
+      assert.ok(snapshot.candidates[0].distanceMetres < snapshot.candidates[1].distanceMetres);
+
+      const reserved = await assign(request, near, { body: { quantity: 2 } });
+      assert.equal(reserved.status, 201, await reserved.clone().text());
+      const updated = await reserved.json();
+      const afterReservation = await (await suggestions()).json();
+      assert.equal(afterReservation.requestVersion, updated.requestVersion);
+      assert.equal(afterReservation.allocatableQuantity, 6);
+      assert.deepEqual(afterReservation.candidates.map(({ availableQuantity, coveredQuantity }) =>
+        [availableQuantity, coveredQuantity]), [[1, 1], [8, 6]]);
+
+      await operations.db.query(
+        `INSERT INTO stock_lot (event_id, category_code, unit, received_quantity, location)
+         SELECT $1, $2, 'cases', 1, ST_Point($3, $4, 4326)::geography FROM generate_series(1, 100)`,
+        [event, category, validReport.location.longitude, validReport.location.latitude],
+      );
+      const bounded = await (await suggestions()).json();
+      const lotIds = bounded.candidates.map(({ lotId }) => lotId);
+      assert.equal(lotIds.length, 100);
+      assert.deepEqual(lotIds, [...lotIds].sort());
+      assert.ok(!lotIds.includes(near.id) && !lotIds.includes(far.id));
+
+      const rankUrl = new URL('/internal/matching/rank', matchingApp.url);
+      assert.equal((await httpFetch(rankUrl, { method: 'POST' })).status, 404);
+      assert.equal((await httpFetch(rankUrl, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-matching-key': process.env.MATCHING_INTERNAL_KEY },
+        body: JSON.stringify({ allocatableQuantity: 8, candidates: Array(101).fill({}) }),
+      })).status, 400);
+
+      await matchingApp.close();
+      assert.equal((await suggestions()).status, 503);
+      const stock = await send(event, coordinatorToken, { resource: 'stock-lots', requestId: far.id });
+      assert.equal(stock.status, 200);
+      assert.equal((await assign(request, far)).status, 409);
+      const manual = await assign({ ...request, version: updated.requestVersion }, far, { body: { quantity: 6 } });
+      assert.equal(manual.status, 201, await manual.clone().text());
+      assert.equal((await manual.json()).allocatableQuantity, 0);
+      assert.deepEqual(await (await suggestions()).json(), {
+        requestVersion: updated.requestVersion + 1, allocatableQuantity: 0, policyVersion: null, candidates: [],
+      });
     });
   });
 

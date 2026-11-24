@@ -65,7 +65,7 @@ Paths are relative to `/v1/events/{eventId}`. Resolve the actor and role from th
 | `POST /stock-lots` | Coordinator. Category, unit, received quantity and location. | `201` lot with available and reserved quantities |
 | `GET /stock-lots`, `GET /stock-lots/{id}` | Coordinator. List supports category filter. | `200` lot list or detail |
 | `PATCH /stock-lots/{id}` | Coordinator. Version, updated received quantity or location, and reason for a quantity adjustment. | `200` updated lot |
-| `GET /requests/{id}/matches` | Coordinator. Verified request. Filter compatible available lots and rank a bounded snapshot. | `200` candidates with lot ID, availability, distance and explanation, plus the request version |
+| `GET /requests/{id}/matches` | Coordinator. Verified request. Filter compatible available lots and rank a bounded snapshot. | `200` request version, allocatable quantity, policy version and ranked candidates |
 | `POST /assignments` | Coordinator. Request ID and version, lot ID, volunteer ID, quantity and optional instructions. | `201` assignment with current quantities |
 | `GET /assignments`, `GET /assignments/{id}` | Coordinator or assigned volunteer. List supports assignment state filter. | `200` scoped assignments or assignment detail |
 | `POST /assignments/{id}/acceptance` | Assigned volunteer. Version. Assigned → accepted. | `200` updated assignment |
@@ -97,6 +97,12 @@ Return errors as `{ code, message, details? }`.
 Conflicts may include current versions and quantities visible to the caller. Mutations check the supplied version under lock and return the new version. Changes to request progress or allocatable need also advance the request version. Lot balance changes advance the lot version. Creating an assignment rechecks current lot eligibility and availability because matches come from a snapshot.
 
 Every mutation carries an `Idempotency-Key`. Check current authorization before replay. Claim the actor and key in the same transaction as the change. A concurrent identical-key call waits for that claim. After commit, an identical fingerprint replays the stored status and body before checking the entity version. A changed fingerprint returns `409`. A rollback removes the claim so a retry can execute. Store mutation responses without exact locations, delivery instructions or protected notes. Clients read those fields through authorized detail endpoints.
+
+## Stock suggestions
+
+For an active event and a verified request, Operations selects up to 100 lots within 25 km of the request with the same category and unit and positive available quantity. PostGIS uses spherical distance. The snapshot bounds the candidate set by distance and lot ID. Matching's `distance-first-v1` policy sorts that set by ascending distance, descending quantity covered, then ascending lot ID. Coverage is the lesser of lot availability and allocatable need. Request urgency stays in the coordinator queue.
+
+The response contains `requestVersion`, `allocatableQuantity`, `policyVersion` and `candidates`. Each candidate has `lotId`, `availableQuantity`, `distanceMetres`, `coveredQuantity` and `explanation`. When there are no candidates or no allocatable need, the response contains an empty candidate array and a null policy version. A request outside the active event returns `404`. An unverified request returns `409`. Ranking failures return `503` and the ordinary stock and assignment endpoints remain available.
 
 ## Allocation transaction
 

@@ -1,0 +1,22 @@
+{
+  "snapshot": {
+    "allocatableQuantity": 8,
+    "candidates": [
+      { "lotId": "00000000-0000-4000-8000-000000000005", "distanceMetres": 6000, "availableQuantity": 8 },
+      { "lotId": "00000000-0000-4000-8000-000000000004", "distanceMetres": 2000, "availableQuantity": 12 },
+      { "lotId": "00000000-0000-4000-8000-000000000001", "distanceMetres": 2000, "availableQuantity": 3 },
+      { "lotId": "00000000-0000-4000-8000-000000000003", "distanceMetres": 2000, "availableQuantity": 8 },
+      { "lotId": "00000000-0000-4000-8000-000000000002", "distanceMetres": 2000, "availableQuantity": 3 }
+    ]
+  },
+  "expected": {
+    "policyVersion": "distance-first-v1",
+    "candidates": [
+      { "lotId": "00000000-0000-4000-8000-000000000003", "coveredQuantity": 8, "explanation": "Covers 8 of 8 needed. Ranked by distance, then coverage." },
+      { "lotId": "00000000-0000-4000-8000-000000000004", "coveredQuantity": 8, "explanation": "Covers 8 of 8 needed. Ranked by distance, then coverage." },
+      { "lotId": "00000000-0000-4000-8000-000000000001", "coveredQuantity": 3, "explanation": "Covers 3 of 8 needed. Ranked by distance, then coverage." },
+      { "lotId": "00000000-0000-4000-8000-000000000002", "coveredQuantity": 3, "explanation": "Covers 3 of 8 needed. Ranked by distance, then coverage." },
+      { "lotId": "00000000-0000-4000-8000-000000000005", "coveredQuantity": 8, "explanation": "Covers 8 of 8 needed. Ranked by distance, then coverage." }
+    ]
+  }
+}
