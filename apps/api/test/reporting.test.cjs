@@ -61,7 +61,7 @@ test('Request reporting and review access through Access and Relief Operations',
   const operations = await isolatedDatabase(t, process.env.DATABASE_URL,
     'operations/001-resident-requests.sql', 'operations/002-request-review.sql',
     'operations/003-stock-lots.sql', 'operations/004-assignments.sql', 'operations/005-stock-adjustments.sql',
-    'operations/006-stock-matching.sql');
+    'operations/006-stock-matching.sql', 'operations/007-delivery-records.sql');
   const access = await isolatedDatabase(t, process.env.ACCESS_DATABASE_URL, 'access/001-resident-membership.sql');
   const event = randomUUID();
   const anotherEvent = randomUUID();
@@ -797,6 +797,75 @@ test('Request reporting and review access through Access and Relief Operations',
       assert.deepEqual(await (await suggestions()).json(), {
         requestVersion: updated.requestVersion + 1, allocatableQuantity: 0, policyVersion: null, candidates: [],
       });
+    });
+
+    await t.test('assignment reads scope offers and protect delivery details by role and state', async () => {
+      const volunteerToken = await token('auth0|volunteer');
+      const foreignToken = await token('auth0|foreign-volunteer');
+      await access.db.query("INSERT INTO event_member (event_id, user_id, role) VALUES ($1, $2, 'volunteer')",
+        [event, foreignVolunteer]);
+      const request = await newRequest();
+      const lot = await newLot();
+      const created = await assign(request, lot);
+      assert.equal(created.status, 201, await created.clone().text());
+      const { id } = await created.json();
+      const detail = (bearer, eventId = event) => send(eventId, bearer, { resource: 'assignments', requestId: id });
+      const list = (bearer, query) => send(event, bearer, { resource: 'assignments', query });
+
+      assert.equal((await detail(undefined)).status, 401);
+      assert.equal((await detail(ownerToken)).status, 403);
+      assert.equal((await detail(foreignToken)).status, 404);
+      assert.equal((await detail(coordinatorToken, anotherEvent)).status, 404);
+      assert.deepEqual(await (await list(foreignToken)).json(), { assignments: [], nextCursor: null });
+      assert.equal((await list(volunteerToken, { state: 'invalid' })).status, 400);
+
+      const offered = await detail(volunteerToken);
+      assert.equal(offered.status, 200, await offered.clone().text());
+      assert.equal(offered.headers.get('cache-control'), 'no-store');
+      const offer = await offered.json();
+      assert.equal(offer.state, 'assigned');
+      assert.equal(offer.assignedQuantity, 5);
+      assert.equal(offer.remainingQuantity, 5);
+      assert.deepEqual(offer.generalArea, { latitude: 6.9, longitude: 79.9 });
+      for (const field of ['location', 'instructions', 'description', 'requestId', 'lotId', 'volunteerId']) {
+        assert.equal(field in offer, false);
+      }
+      const overview = await (await detail(coordinatorToken)).json();
+      assert.deepEqual(overview.location, validReport.location);
+      assert.equal(overview.volunteerId, volunteer);
+
+      const first = await (await list(volunteerToken, { state: 'assigned', limit: 1 })).json();
+      assert.deepEqual(first.assignments, [offer]);
+      assert.ok(first.nextCursor);
+      const second = await (await list(volunteerToken, { state: 'assigned', limit: 1, cursor: first.nextCursor })).json();
+      assert.equal(second.assignments.length, 1);
+      assert.notEqual(second.assignments[0].id, id);
+
+      // Seed the states to exercise reads before the volunteer commands exist.
+      for (const state of ['accepted', 'in_transit']) {
+        await operations.db.query('UPDATE assignment SET state = $2, version = version + 1 WHERE id = $1', [id, state]);
+        const active = await (await detail(volunteerToken)).json();
+        assert.equal(active.state, state);
+        assert.deepEqual(active.location, validReport.location);
+        assert.equal(active.instructions, 'Meet the site coordinator');
+        const activeList = await (await list(volunteerToken, { state })).json();
+        assert.equal(activeList.assignments[0].id, id);
+        assert.equal('location' in activeList.assignments[0] || 'instructions' in activeList.assignments[0], false);
+      }
+      await operations.db.query(
+        `WITH cancelled AS (
+           UPDATE assignment SET state = 'cancelled', version = version + 1 WHERE id = $1
+           RETURNING stock_lot_id, assigned_quantity
+         )
+         UPDATE stock_lot SET reserved_quantity = reserved_quantity - cancelled.assigned_quantity, version = version + 1
+          FROM cancelled WHERE stock_lot.id = cancelled.stock_lot_id`, [id],
+      );
+      const cancelled = await (await detail(volunteerToken)).json();
+      assert.equal(cancelled.state, 'cancelled');
+      assert.equal(cancelled.remainingQuantity, 0);
+      assert.equal('location' in cancelled || 'instructions' in cancelled, false);
+      await access.db.query('DELETE FROM event_member WHERE event_id = $1 AND user_id = $2', [event, volunteer]);
+      assert.equal((await detail(volunteerToken)).status, 403);
     });
   });
 

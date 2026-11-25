@@ -12,6 +12,11 @@ export interface RequestReader {
   role: 'resident' | 'coordinator';
 }
 
+export interface AssignmentReader {
+  userId: string;
+  role: 'coordinator' | 'volunteer';
+}
+
 export type VolunteerEligibility = 'eligible' | 'ineligible' | 'unavailable';
 
 @Injectable()
@@ -42,6 +47,15 @@ export class AccessClient {
     const forbiddenMessage = 'Resident or coordinator event membership is required';
     const actor = await this.resolveActor(eventId, forbiddenMessage, authorization);
     if (actor.role === 'volunteer') {
+      throw new ForbiddenException(forbiddenMessage);
+    }
+    return { userId: actor.userId, role: actor.role };
+  }
+
+  async requireAssignmentReader(eventId: string, authorization?: string): Promise<AssignmentReader> {
+    const forbiddenMessage = 'Coordinator or volunteer event membership is required';
+    const actor = await this.resolveActor(eventId, forbiddenMessage, authorization);
+    if (actor.role === 'resident') {
       throw new ForbiddenException(forbiddenMessage);
     }
     return { userId: actor.userId, role: actor.role };

@@ -17,7 +17,6 @@ import { MatchingClient } from '../matching/matching-client';
 import { parsePage } from '../operations/input';
 import { OperationsErrorFilter, requireIdempotencyKey } from '../operations/operations-http';
 import { AccessClient } from './access-client';
-import { parseAllocation } from './allocation';
 import { parseReport, parseReviewState } from './report';
 import { RequestsRepository } from './requests.repository';
 import { parseReviewAction, parseReviewCommand, parseUrgency } from './review';
@@ -111,29 +110,5 @@ export class RequestsController {
       throw new NotFoundException('Request not found');
     }
     return request;
-  }
-}
-
-@Controller('v1/events/:eventId/assignments')
-@UseFilters(OperationsErrorFilter)
-export class AssignmentsController {
-  constructor(
-    private readonly access: AccessClient,
-    private readonly requests: RequestsRepository,
-  ) {}
-
-  @Post()
-  async create(
-    @Param('eventId', ParseUUIDPipe) eventId: string,
-    @Headers('authorization') authorization: string | undefined,
-    @Headers('idempotency-key') key: string | undefined,
-    @Body() body: unknown,
-  ) {
-    const userId = await this.access.requireCoordinator(eventId, authorization);
-    const operationKey = requireIdempotencyKey(key);
-    const input = parseAllocation(body);
-    const normalizedEvent = eventId.toLowerCase();
-    const eligibility = await this.access.volunteerEligibility(normalizedEvent, input.volunteerId);
-    return this.requests.allocate(normalizedEvent, userId, operationKey, input, eligibility);
   }
 }

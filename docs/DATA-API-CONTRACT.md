@@ -83,6 +83,8 @@ Stock adjustment accepts the current lot `version` and at least one of `received
 
 Assignment creation accepts `requestId`, `requestVersion`, `lotId`, `volunteerId`, `quantity` and optional `instructions` of up to 2,000 characters. The response includes the assignment's ID, version and state, the new request and lot versions, the lot's reserved and available quantities, and the request's allocatable quantity. A stale request returns `409 STALE_VERSION` with its current `version`. Quantity conflicts return `409 INSUFFICIENT_NEED` or `409 INSUFFICIENT_STOCK` with the current allocatable or available quantity. A user without a volunteer membership in the event returns `400 INVALID_VOLUNTEER`.
 
+Assignment lists return `{ assignments, nextCursor }` and accept a `state` filter. Summaries include the category, unit, state, assigned, delivered and remaining quantities, version, creation time and a `generalArea` point rounded to the nearest tenth of a degree for the demo. Remaining quantity counts the reservation still held, so it is zero after cancellation or completion. Coordinator detail adds the request, lot and volunteer IDs. Exact location and instructions are returned on coordinator detail and on volunteer detail while the assignment is `accepted` or `in_transit`.
+
 Return errors as `{ code, message, details? }`.
 
 | Status | When to return it |
