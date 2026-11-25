@@ -55,7 +55,8 @@ Paths are relative to `/v1/events/{eventId}`. Resolve the actor and role from th
 | Method and path | Actor and input | Success |
 |---|---|---|
 | `POST /requests` | Resident. Category, unit, quantity, description and location. | `201` submitted request |
-| `GET /requests/access` | Resident or coordinator. Resolve the event role for the browser workspace. | `200` with `{ role }` |
+| `GET /access` | Resident, coordinator or volunteer. Resolve the event role for the browser workspace. | `200` with `{ role }` |
+| `GET /requests/access` | Resident or coordinator. Resolve the role for the request workspace. | `200` with `{ role }` |
 | `GET /requests`, `GET /requests/{id}` | Resident or coordinator. List supports `reviewState` and `urgency` filters. | `200` scoped reports or report detail with visible activity |
 | `POST /requests/{id}/clarifications` | Coordinator. Version and question. Submitted → needs clarification. | `200` updated request |
 | `POST /requests/{id}/replies` | Owning resident. Version and reply. Needs clarification → submitted. | `200` updated request |
@@ -77,6 +78,8 @@ Validate IDs, enum values, required nonblank text, integer quantities in the dat
 
 The demo accepts `routine`, `urgent` and `critical` for verification and the queue's urgency filter. A verification carries `confirmedQuantity`, `urgency`, `source` with a `type` and synthetic `reference`, and `rationale`. The demo source types are `shelter_intake` and `field_lead`. Review actions advance the request version and append activity with that version. Coordinator detail includes protected verification notes, actor IDs and related request IDs. Resident detail includes the questions, replies, confirmed quantity and urgency, and any resident-facing rejection reason.
 
+Verified request detail includes `fulfilment` with `deliveredQuantity` and `outstandingQuantity`. Coordinator detail also reports `allocatableQuantity`.
+
 Stock entry accepts `category`, `unit`, `receivedQuantity` and `location` with `latitude` and `longitude`. Create, list and detail return `receivedQuantity`, `reservedQuantity`, `deliveredQuantity` and `availableQuantity`. The list returns `{ stockLots, nextCursor }`. Exact stock location is available through coordinator detail.
 
 Stock adjustment accepts the current lot `version` and at least one of `receivedQuantity` or `location`. Include a nonblank `reason` of up to 2,000 characters when supplying `receivedQuantity`. The reason goes in the audit entry. The response returns the updated lot summary. A stale lot returns `409 STALE_VERSION` with its current `version`. A reduction below the reserved and delivered total returns `409 INSUFFICIENT_STOCK` with `minimumReceivedQuantity`.
@@ -84,6 +87,8 @@ Stock adjustment accepts the current lot `version` and at least one of `received
 Assignment creation accepts `requestId`, `requestVersion`, `lotId`, `volunteerId`, `quantity` and optional `instructions` of up to 2,000 characters. The response includes the assignment's ID, version and state, the new request and lot versions, the lot's reserved and available quantities, and the request's allocatable quantity. A stale request returns `409 STALE_VERSION` with its current `version`. Quantity conflicts return `409 INSUFFICIENT_NEED` or `409 INSUFFICIENT_STOCK` with the current allocatable or available quantity. A user without a volunteer membership in the event returns `400 INVALID_VOLUNTEER`.
 
 Assignment lists return `{ assignments, nextCursor }` and accept a `state` filter. Summaries include the category, unit, state, assigned, delivered and remaining quantities, version, creation time and a `generalArea` point rounded to the nearest tenth of a degree for the demo. Remaining quantity counts the reservation still held, so it is zero after cancellation or completion. Coordinator detail adds the request, lot and volunteer IDs. Exact location and instructions are returned on coordinator detail and on volunteer detail while the assignment is `accepted` or `in_transit`.
+
+Assignment commands take the assignment `version`. Deliveries also take `quantity`, and cancellation takes a nonblank `reason` of up to 2,000 characters. Updated assignment responses include `id`, `state`, `version`, `assignedQuantity`, `deliveredQuantity` and `remainingQuantity`. Recording a delivery wraps that response as `{ assignment, delivery }`, with the delivery's `id`, `quantity` and `recordedAt`. An outdated assignment version returns `409 STALE_VERSION` with the current `version`. A delivery exceeding the reservation returns `409 INSUFFICIENT_RESERVATION` with `remainingQuantity`. Cancellation records the reason in the audit entry.
 
 Return errors as `{ code, message, details? }`.
 

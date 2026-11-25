@@ -25,6 +25,11 @@ export interface RequestSummary {
 export interface RequestDetail extends RequestSummary {
   description: string;
   location: ReportInput['location'];
+  fulfilment?: {
+    deliveredQuantity: number;
+    outstandingQuantity: number;
+    allocatableQuantity?: number;
+  };
   activity: {
     version: number;
     action: ReviewCommand['action'];

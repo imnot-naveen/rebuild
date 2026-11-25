@@ -1,6 +1,6 @@
 # Rebuild status
 
-- Updated 24 November 2026, Asia/Colombo
+- Updated 25 November 2026, Asia/Colombo
 - Current milestone M2
 - R00 — DONE
 - R01 — DONE
@@ -10,8 +10,8 @@
 - R04 — DONE
 - R05 — DONE
 - R06 — DONE
-- R07 — IN_PROGRESS
-- Branch `codex/r07-fulfilment`
+- R07 — DONE
+- Branch `feat/assignments/r07-volunteer-flow`
 
 ## Progress
 
@@ -36,7 +36,13 @@ The assistant implemented and verified the routine R02a scaffolding. The R02a al
 
 ## Next action
 
-Naveen's first R07 implementation exercise is the coordinator cancellation transaction. Reuse `OperationsDatabase.mutate` for the operation key. Read the assignment's immutable parent IDs, then lock the request, lot and assignment in that order. After locking, check the current version and active state. Release `assigned_quantity - delivered_quantity`, advance the three versions, and commit the cancellation reason and audit entry with the update. Demonstrate `409 STALE_VERSION` for the losing command and a safe replay of a successful cancellation.
+R08 adds the PWA shell and account-scoped offline request drafts. Start with the draft lifecycle and decide how the browser retains the original operation key when it cannot confirm a submission. Demonstrate that one resident can reopen and send a saved draft and that another account on the same device cannot see it.
+
+## R07 closeout · 25 November 2026
+
+- Brought the next planned Rebuild session forward and started from `origin/main` at `b7bedd4` after [PR #15](https://github.com/imnot-naveen/rebuild/pull/15) merged. At Naveen's request, the assistant implemented the [assignment transaction](../apps/api/src/assignments/assignments.repository.ts) and volunteer and coordinator screens. Delivery and cancellation lock the request, lot and assignment in that order. A cancellation releases only the locked assignment's undelivered balance and commits all three version changes, the audit reason and the retry response together.
+- Both workspace builds passed. The updated migrations ran twice on disposable PostgreSQL 17.6 and PostGIS 3.7.0. All 29 API checks passed using the committed versions of the two locally edited baseline tests. The HTTP walkthrough submitted and verified ten cases, reserved eight, delivered five, cancelled the remaining three and delivered five through a new assignment. A delivery and a cancellation queued on the same request with the same assignment version. The delivery went first, the cancellation returned `409 STALE_VERSION`, and a fresh cancellation released the one case still reserved.
+- Chrome at 390 px used synthetic sign-in with the real Access and Operations services. A second volunteer saw no assignment. The assigned volunteer saw the exact location only after accepting and while active. When the first delivery response was withheld, the browser reused the key and PostGIS showed one delivery row. The coordinator cancelled through the browser, with the reason in the audit entry, and the resident saw five cases delivered before later seeing all ten and **Fulfilled**. The hosted Auth0 tenant walkthrough and organizer review of the general-area display remain open. Focused time was not measured.
 
 ## R07 kickoff · 24 November 2026
 

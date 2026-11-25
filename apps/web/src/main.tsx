@@ -1,9 +1,10 @@
 import { Auth0Provider, useAuth0 } from '@auth0/auth0-react';
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AssignmentWorkspace } from './assignment-workspace';
+import { coordinatorRequest } from './coordinator-api';
 import { Inventory } from './inventory';
 import { RequestHelp } from './request-help';
-import { readRequest } from './resident-api';
 import type { GetToken, ReviewRole } from './resident-api';
 import { RequestWorkspace } from './resident-requests';
 import './styles.css';
@@ -13,19 +14,20 @@ const auth0ClientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
 const auth0Audience = import.meta.env.VITE_AUTH0_AUDIENCE;
 const eventId = import.meta.env.VITE_RELIEF_EVENT_ID;
 const homeUrl = new URL('/', window.location.origin).href;
+type EventRole = ReviewRole | 'volunteer';
 
 function EventRequests({ eventId, getToken }: { eventId: string; getToken: GetToken }) {
-  const [access, setAccess] = useState<ReviewRole>();
+  const [access, setAccess] = useState<EventRole>();
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [requestListVersion, setRequestListVersion] = useState(0);
-  const [coordinatorView, setCoordinatorView] = useState<'queue' | 'inventory'>('queue');
+  const [coordinatorView, setCoordinatorView] = useState<'queue' | 'inventory' | 'assignments'>('queue');
   const [stockRevision, setStockRevision] = useState(0);
   const refreshStock = () => setStockRevision((value) => value + 1);
 
   useEffect(() => {
     const controller = new AbortController();
-    void readRequest<{ role: ReviewRole }>(eventId, getToken, '/access', controller.signal)
+    void coordinatorRequest<{ role: EventRole }>({ eventId, getToken }, '/access', controller.signal)
       .then(({ role }) => {
         if (!controller.signal.aborted) setAccess(role);
       })
@@ -51,6 +53,9 @@ function EventRequests({ eventId, getToken }: { eventId: string; getToken: GetTo
         <button type="button" aria-pressed={coordinatorView === 'inventory'} onClick={() => setCoordinatorView('inventory')}>
           Inventory
         </button>
+        <button type="button" aria-pressed={coordinatorView === 'assignments'} onClick={() => setCoordinatorView('assignments')}>
+          Assignments
+        </button>
       </nav>
       <div hidden={coordinatorView !== 'queue'}>
         <RequestWorkspace eventId={eventId} getToken={getToken} role={access}
@@ -59,8 +64,13 @@ function EventRequests({ eventId, getToken }: { eventId: string; getToken: GetTo
       <div hidden={coordinatorView !== 'inventory'}>
         <Inventory eventId={eventId} getToken={getToken} revision={stockRevision} onStockChanged={refreshStock} />
       </div>
+      <div hidden={coordinatorView !== 'assignments'}>
+        <AssignmentWorkspace eventId={eventId} getToken={getToken} role={access} revision={stockRevision}
+          onChanged={refreshStock} />
+      </div>
     </>
   );
+  if (access === 'volunteer') return <AssignmentWorkspace eventId={eventId} getToken={getToken} role={access} />;
   return (
     <>
       <RequestHelp eventId={eventId} getToken={getToken}

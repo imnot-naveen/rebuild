@@ -61,7 +61,7 @@ test('Request reporting and review access through Access and Relief Operations',
   const operations = await isolatedDatabase(t, process.env.DATABASE_URL,
     'operations/001-resident-requests.sql', 'operations/002-request-review.sql',
     'operations/003-stock-lots.sql', 'operations/004-assignments.sql', 'operations/005-stock-adjustments.sql',
-    'operations/006-stock-matching.sql', 'operations/007-delivery-records.sql');
+    'operations/006-stock-matching.sql', 'operations/007-delivery-records.sql', 'operations/008-assignment-audit.sql');
   const access = await isolatedDatabase(t, process.env.ACCESS_DATABASE_URL, 'access/001-resident-membership.sql');
   const event = randomUUID();
   const anotherEvent = randomUUID();
@@ -495,24 +495,24 @@ test('Request reporting and review access through Access and Relief Operations',
     await operations.db.query("INSERT INTO category (code, unit) VALUES ('blankets', 'bundles')");
     const secondCoordinatorToken = await token('auth0|second-coordinator');
 
-    async function newRequest(verify = true, body = validReport) {
+    async function newRequest(verify = true, body = validReport, confirmedQuantity = 8) {
       const created = await send(event, ownerToken, { body, key: randomUUID() });
       assert.equal(created.status, 201, await created.clone().text());
       const request = await created.json();
       if (!verify) return request;
       const verified = await send(event, coordinatorToken, {
         requestId: request.id, action: 'verification', key: randomUUID(),
-        body: { version: request.version, confirmedQuantity: 8, urgency: 'routine',
-          source: { type: 'field_lead', reference: 'synthetic-allocation' }, rationale: 'Confirmed eight cases' },
+        body: { version: request.version, confirmedQuantity, urgency: 'routine',
+          source: { type: 'field_lead', reference: 'synthetic-allocation' }, rationale: 'Confirmed need' },
       });
       assert.equal(verified.status, 200, await verified.clone().text());
       return verified.json();
     }
 
-    async function newLot(eventId = event, category = validReport.category, unit = validReport.unit) {
+    async function newLot(eventId = event, category = validReport.category, unit = validReport.unit, receivedQuantity = 8) {
       const created = await send(eventId, coordinatorToken, {
         resource: 'stock-lots', key: randomUUID(),
-        body: { category, unit, receivedQuantity: 8, location: validReport.location },
+        body: { category, unit, receivedQuantity, location: validReport.location },
       });
       assert.equal(created.status, 201, await created.clone().text());
       return created.json();
@@ -532,6 +532,28 @@ test('Request reporting and review access through Access and Relief Operations',
                 version FROM stock_lot WHERE id = $1`, [lot.id],
       );
       return result.rows[0];
+    }
+
+    function command(assignment, bearer, action, input = {}, key = randomUUID(), eventId = event) {
+      return send(eventId, bearer, { resource: 'assignments', requestId: assignment.id, action, key,
+        body: { version: assignment.version, ...input } });
+    }
+
+    async function expectJson(response, status) {
+      assert.equal(response.status, status, await response.clone().text());
+      return response.json();
+    }
+
+    async function startDelivery(request, lot, volunteerToken, quantity) {
+      const offered = await expectJson(await assign(request, lot, { body: { quantity } }), 201);
+      const accepted = await expectJson(await command(offered, volunteerToken, 'acceptance'), 200);
+      const inTransit = await expectJson(await command(accepted, volunteerToken, 'transit'), 200);
+      assert.equal(inTransit.state, 'in_transit');
+      return inTransit;
+    }
+
+    async function fulfilment(request, bearer = coordinatorToken) {
+      return (await expectJson(await send(event, bearer, { requestId: request.id }), 200)).fulfilment;
     }
 
     await t.test('rejects invalid roles, event scope and request or lot eligibility', async () => {
@@ -799,6 +821,117 @@ test('Request reporting and review access through Access and Relief Operations',
       });
     });
 
+    await t.test('partial delivery, cancellation and reallocation fulfil a resident report with safe retries', async () => {
+      const volunteerToken = await token('auth0|volunteer');
+      const request = await newRequest(true, { ...validReport, quantity: 10 }, 10);
+      const lot = await newLot(event, validReport.category, validReport.unit, 10);
+      const inTransit = await startDelivery(request, lot, volunteerToken, 8);
+      const deliveryKey = randomUUID();
+      const cancelKey = randomUUID();
+      const cancelReason = { reason: 'Volunteer ended the route' };
+      assert.deepEqual(await balance(lot), { reserved: 8, available: 2, version: 2 });
+      assert.equal((await command(inTransit, volunteerToken, 'deliveries', { quantity: 0 })).status, 400);
+      const tooMuch = await expectJson(await command(inTransit, volunteerToken, 'deliveries', { quantity: 9 }), 409);
+      assert.equal(tooMuch.code, 'INSUFFICIENT_RESERVATION');
+      assert.deepEqual(tooMuch.details, { remainingQuantity: 8 });
+
+      const deliveries = await Promise.all([1, 2].map(() =>
+        command(inTransit, volunteerToken, 'deliveries', { quantity: 5 }, deliveryKey)));
+      const partial = await expectJson(deliveries[0], 201);
+      assert.deepEqual(await expectJson(deliveries[1], 201), partial);
+      assert.equal(partial.assignment.state, 'in_transit');
+      assert.equal(partial.assignment.deliveredQuantity, 5);
+      assert.equal(partial.assignment.remainingQuantity, 3);
+      assert.equal(partial.delivery.quantity, 5);
+      assert.ok(Date.parse(partial.delivery.recordedAt));
+      assert.deepEqual(await balance(lot), { reserved: 3, available: 2, version: 3 });
+      assert.deepEqual(await fulfilment(request), { deliveredQuantity: 5, outstandingQuantity: 5, allocatableQuantity: 2 });
+      assert.equal((await command(inTransit, volunteerToken, 'deliveries', { quantity: 4 }, deliveryKey)).status, 409);
+      assert.equal((await command(partial.assignment, volunteerToken, 'cancellation', cancelReason)).status, 403);
+      assert.equal((await command(partial.assignment, coordinatorToken, 'cancellation', { reason: '  ' })).status, 400);
+
+      const cancelled = await expectJson(await command(partial.assignment, coordinatorToken, 'cancellation', cancelReason, cancelKey), 200);
+      assert.deepEqual(cancelled, { ...partial.assignment, version: partial.assignment.version + 1, state: 'cancelled', remainingQuantity: 0 });
+      assert.deepEqual(await expectJson(await command(partial.assignment, coordinatorToken, 'cancellation', cancelReason, cancelKey), 200), cancelled);
+      assert.deepEqual(await expectJson(await command(inTransit, volunteerToken, 'deliveries', { quantity: 5 }, deliveryKey), 201), partial);
+      assert.equal((await command(cancelled, coordinatorToken, 'cancellation', cancelReason)).status, 409);
+      assert.equal((await command(cancelled, volunteerToken, 'deliveries', { quantity: 1 })).status, 409);
+      assert.equal((await expectJson(await command(partial.assignment, volunteerToken, 'deliveries', { quantity: 1 }), 409)).code,
+        'STALE_VERSION');
+      assert.deepEqual(await balance(lot), { reserved: 0, available: 5, version: 4 });
+      assert.deepEqual(await fulfilment(request), { deliveredQuantity: 5, outstandingQuantity: 5, allocatableQuantity: 5 });
+      assert.deepEqual(await fulfilment(request, ownerToken), { deliveredQuantity: 5, outstandingQuantity: 5 });
+
+      const updatedRequest = await expectJson(await send(event, coordinatorToken, { requestId: request.id }), 200);
+      assert.equal(updatedRequest.version, request.version + 3);
+      const second = await startDelivery(updatedRequest, lot, volunteerToken, 5);
+      const final = await expectJson(await command(second, volunteerToken, 'deliveries', { quantity: 5 }), 201);
+      assert.equal(final.assignment.state, 'completed');
+      const detail = await expectJson(await send(event, volunteerToken, { resource: 'assignments', requestId: second.id }), 200);
+      assert.equal('location' in detail || 'instructions' in detail, false);
+      assert.deepEqual(await fulfilment(request, ownerToken), { deliveredQuantity: 10, outstandingQuantity: 0 });
+      assert.deepEqual(await balance(lot), { reserved: 0, available: 0, version: 6 });
+      assert.deepEqual((await operations.db.query(
+        'SELECT assignment_id, volunteer_id, quantity FROM delivery WHERE assignment_id IN ($1, $2) ORDER BY recorded_at',
+        [inTransit.id, second.id],
+      )).rows, [inTransit, second].map(({ id }) => ({ assignment_id: id, volunteer_id: volunteer, quantity: 5 })));
+      assert.deepEqual((await operations.db.query(
+        'SELECT actor_id, operation, reason FROM audit_entry WHERE assignment_id = $1 ORDER BY created_at', [inTransit.id],
+      )).rows, [
+        { actor_id: coordinator, operation: 'assignment.create', reason: null },
+        { actor_id: volunteer, operation: 'assignment.acceptance', reason: null },
+        { actor_id: volunteer, operation: 'assignment.transit', reason: null },
+        { actor_id: volunteer, operation: 'assignment.deliveries', reason: null },
+        { actor_id: coordinator, operation: 'assignment.cancellation', reason: cancelReason.reason },
+      ]);
+    });
+
+    await t.test('a queued cancellation loses to delivery and can release the updated balance after refreshing', async () => {
+      const volunteerToken = await token('auth0|volunteer');
+      const request = await newRequest();
+      const lot = await newLot();
+      const inTransit = await startDelivery(request, lot, volunteerToken, 5);
+      const reason = { reason: 'Route ended' };
+      const blocker = await operations.db.connect();
+      const commands = [];
+      const waitForQueue = async (pid, expected) => {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const { rows: [{ waiting }] } = await operations.db.query(
+            `WITH RECURSIVE queue(pid) AS (
+               VALUES ($1::integer)
+               UNION
+               SELECT activity.pid FROM pg_stat_activity activity, queue
+                WHERE queue.pid = ANY(pg_blocking_pids(activity.pid))
+             ) SELECT count(*)::integer - 1 AS waiting FROM queue`, [pid],
+          );
+          if (waiting >= expected) return;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.fail(`Expected ${expected} command(s) in the request lock queue`);
+      };
+      try {
+        await blocker.query('BEGIN');
+        const { rows: [{ pid }] } = await blocker.query('SELECT pg_backend_pid() AS pid');
+        await blocker.query('SELECT id FROM assistance_request WHERE id = $1 FOR NO KEY UPDATE', [request.id]);
+        commands.push(command(inTransit, volunteerToken, 'deliveries', { quantity: 4 }));
+        await waitForQueue(pid, 1);
+        commands.push(command(inTransit, coordinatorToken, 'cancellation', reason));
+        await waitForQueue(pid, 2);
+      } finally {
+        await blocker.query('ROLLBACK').finally(() => blocker.release());
+        await Promise.allSettled(commands);
+      }
+      const [delivery, cancellation] = await Promise.all(commands);
+      const winner = await expectJson(delivery, 201);
+      const stale = await expectJson(cancellation, 409);
+      assert.equal(stale.code, 'STALE_VERSION');
+      assert.deepEqual(stale.details, { version: inTransit.version + 1 });
+      assert.deepEqual(await balance(lot), { reserved: 1, available: 3, version: 3 });
+      await expectJson(await command(winner.assignment, coordinatorToken, 'cancellation', reason), 200);
+      assert.deepEqual(await balance(lot), { reserved: 0, available: 4, version: 4 });
+      assert.equal((await operations.db.query('SELECT 1 FROM delivery WHERE assignment_id = $1', [inTransit.id])).rowCount, 1);
+    });
+
     await t.test('assignment reads scope offers and protect delivery details by role and state', async () => {
       const volunteerToken = await token('auth0|volunteer');
       const foreignToken = await token('auth0|foreign-volunteer');
@@ -841,9 +974,16 @@ test('Request reporting and review access through Access and Relief Operations',
       assert.equal(second.assignments.length, 1);
       assert.notEqual(second.assignments[0].id, id);
 
-      // Seed the states to exercise reads before the volunteer commands exist.
-      for (const state of ['accepted', 'in_transit']) {
-        await operations.db.query('UPDATE assignment SET state = $2, version = version + 1 WHERE id = $1', [id, state]);
+      assert.deepEqual(await expectJson(await send(event, volunteerToken, { resource: 'access' }), 200), { role: 'volunteer' });
+      assert.equal((await command(offer, foreignToken, 'acceptance')).status, 404);
+      assert.equal((await command(offer, volunteerToken, 'transit')).status, 409);
+      assert.equal((await command(offer, coordinatorToken, 'acceptance')).status, 403);
+      assert.equal((await command(offer, foreignToken, 'acceptance', {}, randomUUID(), anotherEvent)).status, 404);
+      const acceptanceKey = randomUUID();
+      let current = offer;
+      for (const [state, action, actionKey] of [['accepted', 'acceptance', acceptanceKey], ['in_transit', 'transit', randomUUID()]]) {
+        current = await expectJson(await command(current, volunteerToken, action, {}, actionKey), 200);
+        assert.equal('location' in current || 'instructions' in current, false);
         const active = await (await detail(volunteerToken)).json();
         assert.equal(active.state, state);
         assert.deepEqual(active.location, validReport.location);
@@ -852,20 +992,14 @@ test('Request reporting and review access through Access and Relief Operations',
         assert.equal(activeList.assignments[0].id, id);
         assert.equal('location' in activeList.assignments[0] || 'instructions' in activeList.assignments[0], false);
       }
-      await operations.db.query(
-        `WITH cancelled AS (
-           UPDATE assignment SET state = 'cancelled', version = version + 1 WHERE id = $1
-           RETURNING stock_lot_id, assigned_quantity
-         )
-         UPDATE stock_lot SET reserved_quantity = reserved_quantity - cancelled.assigned_quantity, version = version + 1
-          FROM cancelled WHERE stock_lot.id = cancelled.stock_lot_id`, [id],
-      );
+      await expectJson(await command(current, coordinatorToken, 'cancellation', { reason: 'Shift ended' }), 200);
       const cancelled = await (await detail(volunteerToken)).json();
       assert.equal(cancelled.state, 'cancelled');
       assert.equal(cancelled.remainingQuantity, 0);
       assert.equal('location' in cancelled || 'instructions' in cancelled, false);
       await access.db.query('DELETE FROM event_member WHERE event_id = $1 AND user_id = $2', [event, volunteer]);
       assert.equal((await detail(volunteerToken)).status, 403);
+      assert.equal((await command(offer, volunteerToken, 'acceptance', {}, acceptanceKey)).status, 403);
     });
   });
 

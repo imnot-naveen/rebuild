@@ -18,6 +18,7 @@ export interface AssignmentReader {
 }
 
 export type VolunteerEligibility = 'eligible' | 'ineligible' | 'unavailable';
+type EventRole = RequestReader['role'] | 'volunteer';
 
 @Injectable()
 export class AccessClient {
@@ -32,10 +33,16 @@ export class AccessClient {
     return this.requireRole('coordinator', eventId, authorization);
   }
 
-  private async requireRole(role: RequestReader['role'], eventId: string, authorization?: string): Promise<string> {
-    const forbiddenMessage = role === 'resident'
-      ? 'Resident event membership is required'
-      : 'Coordinator event membership is required';
+  async requireVolunteer(eventId: string, authorization?: string): Promise<string> {
+    return this.requireRole('volunteer', eventId, authorization);
+  }
+
+  async requireEventMember(eventId: string, authorization?: string) {
+    return this.resolveActor(eventId, 'Event membership is required', authorization);
+  }
+
+  private async requireRole(role: EventRole, eventId: string, authorization?: string): Promise<string> {
+    const forbiddenMessage = `${role[0].toUpperCase()}${role.slice(1)} event membership is required`;
     const actor = await this.resolveActor(eventId, forbiddenMessage, authorization);
     if (actor.role !== role) {
       throw new ForbiddenException(forbiddenMessage);
@@ -78,7 +85,7 @@ export class AccessClient {
     eventId: string,
     forbiddenMessage: string,
     authorization?: string,
-  ): Promise<{ userId: string; role: RequestReader['role'] | 'volunteer' }> {
+  ): Promise<{ userId: string; role: EventRole }> {
     if (!authorization) {
       throw new UnauthorizedException('A bearer access token is required');
     }

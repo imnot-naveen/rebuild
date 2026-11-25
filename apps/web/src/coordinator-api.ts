@@ -80,12 +80,13 @@ export async function coordinatorRequest<T>(
     throw new CoordinatorApiError('Your account lacks permission for this action in this event.');
   }
 
-  const { availableQuantity, allocatableQuantity, minimumReceivedQuantity } = result?.details ?? {};
+  const { availableQuantity, allocatableQuantity, minimumReceivedQuantity, remainingQuantity } = result?.details ?? {};
   const message = typeof result?.message === 'string' ? result.message : 'The event service could not complete the action.';
   const quantities = [
     [availableQuantity, 'Available stock'],
     [allocatableQuantity, 'Allocatable need'],
     [minimumReceivedQuantity, 'Minimum received quantity'],
+    [remainingQuantity, 'Remaining reservation'],
   ] as const;
   const detail = quantities.find(([quantity]) => typeof quantity === 'number');
   throw new CoordinatorApiError(detail ? `${message}. ${detail[1]} is ${detail[0]}.` : message, result?.code);

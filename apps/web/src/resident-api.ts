@@ -21,6 +21,11 @@ export interface RequestSummary {
 export interface RequestDetail extends RequestSummary {
   description: string;
   location: { latitude: number; longitude: number };
+  fulfilment?: {
+    deliveredQuantity: number;
+    outstandingQuantity: number;
+    allocatableQuantity?: number;
+  };
   activity: {
     version: number;
     action: ReviewAction;

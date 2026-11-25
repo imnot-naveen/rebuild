@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Get, Header, Headers, NotFoundException,
+  BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, NotFoundException,
   Param, ParseUUIDPipe, Post, Query, UseFilters,
 } from '@nestjs/common';
 import { parsePage } from '../operations/input';
@@ -7,7 +7,8 @@ import { OperationsErrorFilter, requireIdempotencyKey } from '../operations/oper
 import { AccessClient } from '../requests/access-client';
 import { parseAllocation } from '../requests/allocation';
 import { RequestsRepository } from '../requests/requests.repository';
-import { assignmentStates, AssignmentsRepository } from './assignments.repository';
+import { assignmentStates, parseAssignmentCommand } from './assignment-command';
+import { AssignmentsRepository } from './assignments.repository';
 
 @Controller('v1/events/:eventId/assignments')
 @UseFilters(OperationsErrorFilter)
@@ -59,5 +60,60 @@ export class AssignmentsController {
     const assignment = await this.assignments.find(eventId, assignmentId, reader);
     if (!assignment) throw new NotFoundException('Assignment not found');
     return assignment;
+  }
+
+  @Post(':assignmentId/acceptance')
+  @HttpCode(200)
+  async accept(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('assignmentId', ParseUUIDPipe) id: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const userId = await this.access.requireVolunteer(eventId, authorization);
+    return this.assignments.mutate(eventId.toLowerCase(), id.toLowerCase(), userId, requireIdempotencyKey(key),
+      parseAssignmentCommand('acceptance', body));
+  }
+
+  @Post(':assignmentId/transit')
+  @HttpCode(200)
+  async transit(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('assignmentId', ParseUUIDPipe) id: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const userId = await this.access.requireVolunteer(eventId, authorization);
+    return this.assignments.mutate(eventId.toLowerCase(), id.toLowerCase(), userId, requireIdempotencyKey(key),
+      parseAssignmentCommand('transit', body));
+  }
+
+  @Post(':assignmentId/deliveries')
+  async deliver(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('assignmentId', ParseUUIDPipe) id: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const userId = await this.access.requireVolunteer(eventId, authorization);
+    return this.assignments.mutate(eventId.toLowerCase(), id.toLowerCase(), userId, requireIdempotencyKey(key),
+      parseAssignmentCommand('deliveries', body));
+  }
+
+  @Post(':assignmentId/cancellation')
+  @HttpCode(200)
+  async cancel(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('assignmentId', ParseUUIDPipe) id: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const userId = await this.access.requireCoordinator(eventId, authorization);
+    return this.assignments.mutate(eventId.toLowerCase(), id.toLowerCase(), userId, requireIdempotencyKey(key),
+      parseAssignmentCommand('cancellation', body));
   }
 }
