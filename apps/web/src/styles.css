@@ -37,6 +37,7 @@ button:focus-visible {
 
 .coordinator-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-block: 1rem;
 }

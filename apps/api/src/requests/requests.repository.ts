@@ -22,6 +22,8 @@ type RequestSummaryRow = Omit<RequestSummary, 'createdAt' | 'verifiedQuantity' |
 type RequestDetailRow = RequestSummaryRow & Pick<RequestDetail, 'description' | 'activity'> & {
   latitude: number;
   longitude: number;
+  delivered: string | null;
+  held: string | null;
 };
 
 function summarize({ createdAt, verifiedQuantity, verifiedUrgency, ...fields }: RequestSummaryRow): RequestSummary {
@@ -264,6 +266,7 @@ export class RequestsRepository {
               r.requested_quantity AS quantity, r.review_state AS "reviewState",
               r.created_at AS "createdAt",
               r.verified_quantity AS "verifiedQuantity", r.verified_urgency AS "verifiedUrgency",
+              progress.delivered, progress.held,
               ST_Y(r.location::geometry) AS latitude,
               ST_X(r.location::geometry) AS longitude,
               COALESCE((
@@ -281,22 +284,30 @@ export class RequestsRepository {
               ), '[]'::jsonb) AS activity
          FROM assistance_request r
          JOIN category c ON r.category_code = c.code
-        WHERE r.id = $1 AND r.event_id = $2
+         LEFT JOIN (${assignmentTotalsSql}) progress ON r.review_state = 'verified'
+        WHERE r.event_id = $1 AND r.id = $2
           AND ($3::boolean OR r.resident_id = $4)`,
-      [requestId, eventId, reader.role === 'coordinator', reader.userId],
+      [eventId, requestId, reader.role === 'coordinator', reader.userId],
     );
     const row = result.rows[0];
     if (!row) {
       return null;
     }
 
-    const { description, activity, latitude, longitude, ...summary } = row;
+    const { description, activity, latitude, longitude, delivered, held, ...summary } = row;
+    const deliveredQuantity = Number(delivered);
+    const outstandingQuantity = (summary.verifiedQuantity ?? 0) - deliveredQuantity;
 
     return {
       ...summarize(summary),
       description,
       activity,
       location: { latitude, longitude },
+      ...(delivered !== null ? { fulfilment: {
+        deliveredQuantity,
+        outstandingQuantity,
+        ...(reader.role === 'coordinator' ? { allocatableQuantity: outstandingQuantity - Number(held) } : {}),
+      } } : {}),
     };
   }
 

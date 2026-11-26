@@ -56,7 +56,7 @@ function RequestDetails({ eventId, getToken, requestId, role, stockRevision = 0,
         if (!signal.aborted) setError(reason.message);
       });
     return () => controller.abort();
-  }, [eventId, getToken, requestId, attempt]);
+  }, [eventId, getToken, requestId, attempt, stockRevision]);
 
   function refresh() {
     setError('');
@@ -89,12 +89,21 @@ function RequestDetails({ eventId, getToken, requestId, role, stockRevision = 0,
               <><dt>Quantity confirmed</dt><dd>{detail.verifiedQuantity} {detail.unit}</dd></>
             )}
             {detail.verifiedUrgency && <><dt>Verified urgency</dt><dd>{detail.verifiedUrgency}</dd></>}
+            {detail.fulfilment && <>
+              <dt>Delivery progress</dt>
+              <dd>{detail.fulfilment.deliveredQuantity} of {detail.verifiedQuantity} {detail.unit} delivered
+                {detail.fulfilment.outstandingQuantity === 0 ? ' · Fulfilled' : ''}</dd>
+              <dt>Outstanding need</dt><dd>{detail.fulfilment.outstandingQuantity} {detail.unit}</dd>
+              {detail.fulfilment.allocatableQuantity !== undefined && <>
+                <dt>Allocatable need</dt><dd>{detail.fulfilment.allocatableQuantity} {detail.unit}</dd>
+              </>}
+            </>}
             <dt>Date submitted</dt><dd><RequestDate value={detail.createdAt} /></dd>
             <dt>Description</dt><dd className="description">{detail.description}</dd>
             <dt>Location (latitude, longitude)</dt>
             <dd>{detail.location.latitude}, {detail.location.longitude}</dd>
           </dl>
-          {role === 'coordinator' && detail.reviewState === 'verified' && (
+          {role === 'coordinator' && detail.reviewState === 'verified' && detail.fulfilment?.outstandingQuantity !== 0 && (
             <AssignmentForm access={{ eventId, getToken }} request={detail} stockRevision={stockRevision}
               onRefresh={() => { refresh(); onUpdated(); }} onSaved={(assignment) => {
                 setStatus(`Reserved ${assignment.quantity} ${detail.unit}. Assignment ${assignment.id}. ` +
