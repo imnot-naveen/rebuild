@@ -60,11 +60,22 @@ Open a verified request as a coordinator and choose a suggested lot in the reser
 
 In `apps/web/.env.local`, set `VITE_AUTH0_AUDIENCE` to the API Identifier used for `AUTH0_AUDIENCE` in the backend and `VITE_RELIEF_EVENT_ID` to the UUID of the local synthetic event. The Operations database needs that event, and the Access database needs an `app_user` whose issuer and subject match the resident's Auth0 identity and an `event_member` row for the event with role `resident`.
 
-Start Access, Operations and Vite, then sign in as that resident. Use **Request help** to submit a synthetic report. Enter a category and unit configured in Operations, such as `drinking-water` and `cases` if that pair is seeded. After submission, **My requests** refreshes. Select the report to see its description and coordinates. If the response is lost, submit the same report again from the same open form to retry with the original key.
+Start Access, Operations and Vite, then sign in as that resident. Use **Request help** to submit a synthetic report. Enter a category and unit configured in Operations, such as `drinking-water` and `cases` if that pair is seeded. After submission, **My requests** refreshes. Select the report to see its description and coordinates. If the response is lost, choose **Retry submission** to send the saved request again with the original key.
 
 Seed a second Auth0 identity and give it a `coordinator` membership for the same event. Sign in as that coordinator and open the report in **Coordinator queue**. Ask for clarification, sign back in as the resident and reply, then verify the request as the coordinator with a confirmed quantity, urgency and synthetic source reference. The resident sees the resulting status and activity. The confirmation source and rationale are visible to coordinators. If a review conflicts with a newer version, refresh the request details and review the current state before submitting again.
 
 Vite proxies `/v1` to Operations at `http://127.0.0.1:3000` during development. A deployed frontend needs a same-origin route for `/v1` through the gateway.
+
+### Try the offline app
+
+With Access and Operations running, stop the Vite development server and serve the production build on the same local port.
+
+```powershell
+npm run build --workspace @rebuild/web
+npm exec --workspace @rebuild/web -- vite preview --port 5173 --strictPort
+```
+
+Open the app online first. Sign in as a resident, go offline, enter a report and choose **Save draft**. When connected, sign back in to the same account if prompted and choose **Submit request**. Rebuild keeps one draft per account and event in this browser. **Discard draft** clears it from this device. Return online and close all open Rebuild tabs or app windows to let an updated app shell take over.
 
 ## Check Auth0 token validation
 

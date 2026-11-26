@@ -6,6 +6,7 @@ import { RequestHelp } from './request-help';
 import { readRequest } from './resident-api';
 import type { GetToken, ReviewRole } from './resident-api';
 import { RequestWorkspace } from './resident-requests';
+import { useOnline } from './connectivity';
 import './styles.css';
 
 const auth0Domain = import.meta.env.VITE_AUTH0_DOMAIN;
@@ -74,6 +75,7 @@ function Account() {
   const {
     isLoading, isAuthenticated, error, user, loginWithRedirect, logout, getAccessTokenSilently,
   } = useAuth0();
+  const online = useOnline();
   const getToken = useCallback(() => getAccessTokenSilently(), [getAccessTokenSilently]);
 
   if (isLoading) {
@@ -100,6 +102,8 @@ function Account() {
       </>
     );
   }
+
+  if (!online) return <p role="status">You’re offline. Reconnect and sign in to open your saved draft.</p>;
 
   return (
     <>
@@ -135,3 +139,9 @@ createRoot(document.getElementById('root')!).render(
     </main>
   </StrictMode>,
 );
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('/sw.js').catch((error: unknown) => {
+    console.warn('Could not enable the offline app shell.', error);
+  });
+}
