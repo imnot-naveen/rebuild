@@ -19,6 +19,14 @@ The [product contract](PRODUCT-CONTRACT.md) and [data and API contract](DATA-API
 
 Naveen chose a microservices backend. The [service boundaries and delivery sequence](ARCHITECTURE.md) are merged into `main`. The existing API is the starting point for Relief Operations.
 
+## R08 offline drafts · 26 November 2026
+
+- R08 — DONE. The assistant brought the next planned session forward and branched from `origin/main` at `b7bedd4`. The R07 fulfilment closeout is in [PR #16](https://github.com/imnot-naveen/rebuild/pull/16). R08 uses the resident report workflow already on `main`.
+- The assistant added the installable shell and one IndexedDB draft per signed-in account and event. A send commits the exact payload and key locally before contacting Operations. Uncertain submissions stay available for an explicit retry. A confirmed submission clears the draft. Discard clears the device copy. After an offline reload, the shell prompts for reconnection and sign-in before opening the draft.
+- Both workspace builds passed. Migrations ran twice against disposable PostgreSQL 17.6 with PostGIS 3.7.0, and all 27 API checks passed using the committed versions of the two locally edited tests.
+- Chrome at 390 px passed its installability checks and exercised offline save and reload, reconnection and sign-in, a second account on the same device, explicit discard, and an expired access token. With synthetic sign-in and real Access, Operations and PostGIS, a dropped `201` left the pending draft intact through a new shell version. Retrying used the same payload and key. PostGIS showed one report, the draft cleared, and Cache Storage held only shell files.
+- Physical Android and iOS installation and the hosted Auth0 tenant walkthrough remain unverified. Focused time was not measured. The next build task is R09, the coordinator's duplicate-report suggestions and labelled synthetic evaluation.
+
 ## Evidence and open decisions
 
 - The shared-lot walkthrough starts with 8 available cases. Two coordinators each try to reserve 5 for different requests. One commits and the other sees 3 available and receives a stock conflict. Exactly one assignment commits.
